@@ -1,5 +1,5 @@
 // Life Changer – offline cache. Při každé nové verzi zvyš číslo.
-const CACHE = 'lifechanger-v6';
+const CACHE = 'lifechanger-v7';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json', 'firebase-config.js', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
