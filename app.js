@@ -438,15 +438,15 @@ function txRow(x) {
 
 function vEnvelopes() {
   if (!U.envDraft) U.envDraft = S.envs.map(e => ({ ...e }));
-  const list = U.envDraft, total = list.reduce((a, e) => a + num(e.pct), 0), ok = total === 100;
+  const list = U.envDraft, total = Math.round(list.reduce((a, e) => a + num(e.pct), 0) * 10) / 10, ok = Math.abs(total - 100) < 0.01;
   return `
   <div><a class="back" href="#/penize" data-act="envBack">‹ Peníze</a></div>
   <h1 class="h1">Moje <i>obálky</i></h1>
   <div class="sm mut">Pojmenuj si je, jak chceš, a nastav, kolik % z každého příjmu do nich jde.</div>
-  <div class="stack" style="height:14px">${list.map((e, i) => `<i style="flex:${num(e.pct)} 0 0;background:${PAL[i % PAL.length]}"></i>`).join('')}</div>
-  <div class="sm b" style="color:${ok ? 'var(--moss)' : 'var(--terra)'}">${list.length ? (ok ? 'Celkem 100 % ✓' : `Celkem ${total} % · musí to dát 100 %`) : 'Zatím nemáš žádnou obálku'}</div>
+  <div class="stack" id="envStack" style="height:14px">${list.map((e, i) => `<i style="flex:${num(e.pct)} 0 0;background:${PAL[i % PAL.length]}"></i>`).join('')}</div>
+  <div class="sm b" id="envSum" style="color:${ok ? 'var(--moss)' : 'var(--terra)'}">${list.length ? (ok ? 'Celkem 100 % ✓' : `Celkem ${total} % · musí to dát 100 %`) : 'Zatím nemáš žádnou obálku'}</div>
   <div class="card cream">
-    ${list.map((e, i) => `<div class="env-row"><div class="row gap8"><span class="dot" style="width:12px;height:12px;border-radius:6px;background:${PAL[i % PAL.length]};box-shadow:inset 0 0 0 1px #CDB9A3"></span><label class="sr" for="env${i}">Název obálky</label><input id="env${i}" value="${esc(e.name)}" data-bind="envDraft.${i}.name"><button class="rbtn" data-act="envPct" data-i="${i}" data-n="-5" aria-label="Ubrat">−</button><span class="serif" style="width:46px;text-align:center;font-size:22px">${num(e.pct)} %</span><button class="rbtn d" data-act="envPct" data-i="${i}" data-n="5" aria-label="Přidat">+</button></div><div class="row xs mutd" style="padding-left:22px"><span>v obálce: ${kc(envBalance(e.id))} Kč</span><button class="xbtn" style="font-size:12px;color:var(--red);font-weight:600" data-act="envDel" data-i="${i}">smazat</button></div></div>`).join('')}
+    ${list.map((e, i) => `<div class="env-row"><div class="row gap8"><span class="dot" style="width:12px;height:12px;border-radius:6px;background:${PAL[i % PAL.length]};box-shadow:inset 0 0 0 1px #CDB9A3"></span><label class="sr" for="env${i}">Název obálky</label><input id="env${i}" value="${esc(e.name)}" data-bind="envDraft.${i}.name"><button class="rbtn" data-act="envPct" data-i="${i}" data-n="-1" aria-label="Ubrat">−</button><label class="sr" for="pct${i}">Procenta</label><input id="pct${i}" class="pctin" inputmode="decimal" value="${num(e.pct)}" data-bind="envDraft.${i}.pct" data-live="envSum"><span class="serif" style="font-size:20px;margin-left:-4px">%</span><button class="rbtn d" data-act="envPct" data-i="${i}" data-n="1" aria-label="Přidat">+</button></div><div class="row xs mutd" style="padding-left:22px"><span>v obálce: ${kc(envBalance(e.id))} Kč</span><button class="xbtn" style="font-size:12px;color:var(--red);font-weight:600" data-act="envDel" data-i="${i}">smazat</button></div></div>`).join('')}
     <div class="row gap8"><label for="envNew" class="sr">Nová obálka</label><input id="envNew" class="inp" placeholder="Nová obálka (třeba Investice)" data-enter="envAdd"><button class="btn moss" style="width:auto" data-act="envAdd">Přidat</button></div>
     <div class="note">Tyhle obálky uvidíš u každého příjmu („kam to dát“) i výdaje („odkud beru“).</div>
     <button class="btn" data-act="envSave">Uložit</button>
@@ -534,7 +534,12 @@ const LIVE = {
     el.style.background = p >= 0 ? 'var(--moss)' : 'var(--terra)';
     el.innerHTML = `<span class="xs b">Zisk za ${U.day.date === today() ? 'dnes' : U.day.date === addDays(today(), -1) ? 'včera' : shortD(U.day.date)}</span><span class="serif" style="font-size:24px">${sgn(p)} Kč</span>`;
   },
-  txPrev() { txPreview(); }
+  txPrev() { txPreview(); },
+  envSum() {
+    const l = U.envDraft || [], t = Math.round(l.reduce((a, e) => a + num(e.pct), 0) * 10) / 10, ok = Math.abs(t - 100) < 0.01;
+    const el = $('#envSum'); if (el) { el.textContent = l.length ? (ok ? 'Celkem 100 % ✓' : `Celkem ${String(t).replace('.', ',')} % · musí to dát 100 %`) : ''; el.style.color = ok ? 'var(--moss)' : 'var(--terra)'; }
+    const st = $('#envStack'); if (st) st.innerHTML = l.map((e, i) => `<i style="flex:${num(e.pct)} 0 0;background:${PAL[i % PAL.length]}"></i>`).join('');
+  }
 };
 
 /* ======================================================
@@ -850,10 +855,10 @@ const ACT = {
   debtDel: el => { if (!confirm('Smazat dluh?')) return; S.debts = S.debts.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); },
   /* obálky */
   envBack: () => { U.envDraft = null; },
-  envPct: el => { const e = U.envDraft[+el.dataset.i]; e.pct = Math.max(0, Math.min(100, num(e.pct) + +el.dataset.n)); render(); },
+  envPct: el => { const i = +el.dataset.i, e = U.envDraft[i]; e.pct = Math.max(0, Math.min(100, Math.round((num(e.pct) + +el.dataset.n) * 10) / 10)); const inp = $('#pct' + i); if (inp) inp.value = e.pct; LIVE.envSum(); },
   envAdd: () => { const n = val('envNew'); if (!n) return; U.envDraft.push({ id: uid(), name: n, pct: 0 }); render(); },
   envDel: el => { const e = U.envDraft[+el.dataset.i]; const b = envBalance(e.id); if (Math.round(b) !== 0) return toast(`V obálce je ${kc(b)} Kč – nejdřív je vyber výdajem`); U.envDraft.splice(+el.dataset.i, 1); render(); },
-  envSave: () => { const t = U.envDraft.reduce((a, e) => a + num(e.pct), 0); if (U.envDraft.length && t !== 100) return toast('Procenta musí dát dohromady 100 %'); if (U.envDraft.some(e => !String(e.name).trim())) return toast('Každá obálka potřebuje název'); S.envs = U.envDraft.map(e => ({ ...e, name: String(e.name).trim() })); U.envDraft = null; save(); toast('Obálky uloženy'); go('penize'); },
+  envSave: () => { const t = U.envDraft.reduce((a, e) => a + num(e.pct), 0); if (U.envDraft.length && Math.abs(t - 100) > 0.01) return toast('Procenta musí dát dohromady 100 %'); if (U.envDraft.some(e => !String(e.name).trim())) return toast('Každá obálka potřebuje název'); S.envs = U.envDraft.map(e => ({ ...e, name: String(e.name).trim(), pct: Math.max(0, Math.min(100, num(e.pct))) })); U.envDraft = null; save(); toast('Obálky uloženy'); go('penize'); },
   /* shopy */
   periodMenu: () => { U.periodMenu = !U.periodMenu; render(); },
   period: el => { U.period = el.dataset.k; U.periodMenu = false; render(); },
