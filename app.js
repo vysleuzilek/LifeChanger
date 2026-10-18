@@ -3,8 +3,8 @@
 
 /* ---------- Nastavení rozvrhu (uprav si podle sebe) ---------- */
 const ROZVRH = {
-  skola: { 1: '8–16', 3: '8–17' },          // 0 = Po, 1 = Út, 3 = Čt
-  smena: { cas: '11–21', sude: [0], liche: [0, 4, 5, 6] } // sudé / liché týdny
+  skola: { 1: '8–16', 3: '8–17' },   // 0 = Po, 1 = Út, 3 = Čt
+  smenaCas: '11–21'                  // výchozí čas směny (směny si přidáváš sám v kalendáři)
 };
 
 /* ---------- Pomocníci ---------- */
@@ -142,14 +142,13 @@ function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add
 
 /* ---------- Výpočty ---------- */
 function autoEvents(s) {
-  const w = dow(s), odd = isoWeek(s) % 2 === 1, out = [];
+  const w = dow(s), out = [];
   if (ROZVRH.skola[w]) out.push({ kind: 'school', time: ROZVRH.skola[w], text: 'Škola' });
-  if ((odd ? ROZVRH.smena.liche : ROZVRH.smena.sude).includes(w)) out.push({ kind: 'work', time: ROZVRH.smena.cas, text: 'Směna – rozvoz' });
   return out;
 }
 function dayEvents(s) {
   const a = autoEvents(s);
-  (S.events[s] || []).forEach(e => a.push({ kind: 'mine', time: e.time || '', text: e.text, id: e.id }));
+  (S.events[s] || []).forEach(e => a.push({ kind: e.kind || 'mine', time: e.time || '', text: e.text, id: e.id }));
   S.school.deadlines.filter(d => d.date === s).forEach(d => a.push({ kind: 'deadline', time: 'termín', text: d.title }));
   return a;
 }
@@ -209,7 +208,7 @@ function closeSheet() { U.sheetFn = null; drawSheet(); }
 function vHome() {
   const t = today(), ws = weekStart(t);
   const week = [...Array(7)].map((_, i) => addDays(ws, i)).map(s => {
-    const ev = autoEvents(s); const k = ev.find(e => e.kind === 'work') ? 'work' : ev.find(e => e.kind === 'school') ? 'school' : 'free';
+    const ev = dayEvents(s); const k = ev.find(e => e.kind === 'work') ? 'work' : ev.find(e => e.kind === 'school') ? 'school' : 'free';
     const mine = (S.events[s] || []).length || S.school.deadlines.some(d => d.date === s);
     return `<div class="wd ${s === t ? 'today' : ''}"><span>${DOW[dow(s)]}</span>${s === t ? '<span style="font-size:10px">dnes</span>' : `<span class="dot ${k}"></span>`}</div>`;
   }).join('');
@@ -263,9 +262,8 @@ function vCalendar() {
   const ev = dayEvents(U.sel);
   const col = { work: '#E39A72', school: '#7E8A45', mine: '#3B2A1E', deadline: '#D9B48A' };
   const list = ev.length ? ev.map(e => `<div class="ev"><span class="bar4" style="background:${col[e.kind]}"></span><span class="sm mutd" style="width:64px;flex-shrink:0">${esc(e.time || 'moje')}</span><span class="grow">${esc(e.text)}</span>${e.id ? `<button class="xbtn" data-act="evDel" data-id="${e.id}" aria-label="Smazat">×</button>` : ''}</div>`).join('') : '<div class="note">Volno. Nic tu zatím není.</div>';
-  const wk = isoWeek(U.sel) % 2 ? 'lichý týden' : 'sudý týden';
   return `
-  <div class="row"><a class="back" href="#/domu">‹ Domů</a><span class="sm mut">${wk}</span></div>
+  <div class="row"><a class="back" href="#/domu">‹ Domů</a><span class="sm mut">${(() => { const n = Object.entries(S.events).filter(([d, l]) => d.startsWith(U.calMonth) && l.some(e => e.kind === 'work')).length; return n ? `${n} směn v měsíci` : ''; })()}</span></div>
   <div class="row"><h1 class="h1">${MON[m - 1]} <i>${y}</i></h1><div class="row gap6"><button class="hbtn" data-act="mon" data-n="-1" aria-label="Předchozí měsíc">‹</button><button class="hbtn" data-act="mon" data-n="1" aria-label="Další měsíc">›</button></div></div>
   <div class="card" style="padding:12px">
     <div class="calgrid xs mut" style="text-align:center">${DOW.map(d => `<span>${d}</span>`).join('')}</div>
@@ -275,6 +273,7 @@ function vCalendar() {
   <div class="card cream">
     <div class="ttl" style="font-size:24px">${DOWL[dow(U.sel)]} ${dayNum(U.sel)}. ${fromIso(U.sel).getMonth() + 1}.</div>
     ${list}
+    <button class="btn ${ev.some(e => e.kind === 'work') ? 'light' : 'moss'}" data-act="shiftToggle">${ev.some(e => e.kind === 'work') ? 'Odebrat směnu' : `+ Směna ${ROZVRH.smenaCas}`}</button>
     <div class="row gap8"><label for="evTime" class="sr">Čas</label><input id="evTime" class="inp" style="width:90px" placeholder="čas" inputmode="text"><label for="evText" class="sr">Co</label><input id="evText" class="inp" placeholder="Zapsat věc…" data-enter="addEv"></div>
     <button class="btn" data-act="addEv">Přidat</button>
   </div>`;
@@ -631,7 +630,7 @@ const SHEETS = {
     <div class="note">Všechna data jsou zatím uložená jen v tomhle zařízení. Občas si stáhni zálohu.</div>
     <button class="btn" data-act="backup">Stáhnout zálohu (bez fotek)</button>
     <label class="btn light filebtn" style="display:flex;align-items:center;justify-content:center">Nahrát zálohu<input type="file" accept="application/json" data-file="restore"></label>
-    <div class="note">Rozvrh školy a směn upravíš na začátku souboru app.js (ROZVRH).</div>`;
+    <div class="note">Rozvrh školy upravíš na začátku souboru app.js (ROZVRH). Směny si přidáváš sám v kalendáři.</div>`;
   }
 };
 
@@ -683,6 +682,12 @@ const ACT = {
   pickDay: el => { U.sel = el.dataset.d; render(); },
   mon: el => { const [y, m] = U.calMonth.split('-').map(Number); const d = new Date(y, m - 1 + +el.dataset.n, 1); U.calMonth = iso(d).slice(0, 7); U.sel = iso(d); render(); },
   addEv: () => { const t = val('evText'); if (!t) return; (S.events[U.sel] ||= []).push({ id: uid(), time: val('evTime'), text: t }); save(); render(); },
+  shiftToggle: () => {
+    const l = S.events[U.sel] ||= [];
+    if (l.some(e => e.kind === 'work')) S.events[U.sel] = l.filter(e => e.kind !== 'work');
+    else l.unshift({ id: uid(), kind: 'work', time: val('evTime') || ROZVRH.smenaCas, text: 'Směna – rozvoz' });
+    save(); render();
+  },
   evDel: el => { S.events[U.sel] = (S.events[U.sel] || []).filter(e => e.id !== el.dataset.id); save(); render(); },
   /* peníze */
   moneyTab: el => { U.moneyTab = +el.dataset.i; render(); },
