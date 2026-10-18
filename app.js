@@ -224,16 +224,12 @@ function vHome() {
   return `
   <div class="row"><h1 class="h1">Life <i>Changer</i></h1><div class="row gap8"><span class="sm mut">${shortD(t)}</span><button class="xbtn" data-act="settings" aria-label="Nastavení">${svg('dots')}</button></div></div>
   <a href="#/kalendar" class="col gap6" style="text-decoration:none" aria-label="Otevřít kalendář"><div class="week">${week}</div><div class="xs mut" style="text-align:right">otevřít kalendář ›</div></a>
-  <div class="card cream" style="padding:16px 16px">
+  <div class="cols"><div class="c1">
+  <div class="card cream">
     <div class="row base"><div class="ttl" style="font-size:26px">Moje rostliny</div><a href="#/rostliny" class="sm b" style="text-decoration:none">${due ? `péče: ${due}` : 'vše ok'} ›</a></div>
     <div class="hs">${tiles}<a class="ptile add" href="#/rostliny" data-act="addPlant">${svg('plus', 26)}<span class="sm b">Přidat rostlinu</span></a></div>
   </div>
-  <div class="card">
-    <div class="row base"><div class="ttl" style="font-size:24px">Dnes</div><span class="sm mut">${done} / ${todos.length} hotovo</span></div>
-    ${tdHtml}
-    <div class="addrow"><label for="newTodo" class="sr">Nový úkol</label><input id="newTodo" placeholder="Přidat úkol…" enterkeyhint="done" data-enter="addTodo"><button data-act="addTodo">Přidat</button></div>
-  </div>
-  <div class="row gap12" style="align-items:stretch">
+  <div class="row gap12 homebottom" style="align-items:stretch">
     <a href="#/penize" class="card terra" style="flex:1;gap:2px;text-decoration:none"><span class="sm b">Peníze</span><span class="mid" style="font-size:30px">${kc(totalMoney())} Kč</span><span class="xs b" style="padding-top:8px">aktuální stav</span><span class="xs" style="color:#5A3A26">napočítáno ze sekce Peníze</span></a>
     <div class="card cream" style="flex:1;gap:4px">
       <span class="sm b mutd">Gym tento týden</span><span class="mid" style="font-size:30px">${gymW} / 3</span>
@@ -241,7 +237,14 @@ function vHome() {
       <div class="chips" style="padding-top:6px"><button class="chip ${gymToday ? 'on' : ''}" style="min-height:32px;padding:0 10px;font-size:12px" data-act="gym">${gymToday ? '✓ gym' : '+ gym'}</button><button class="chip ${foodToday ? 'on' : ''}" style="min-height:32px;padding:0 10px;font-size:12px" data-act="food">${foodToday ? '✓ jídlo' : '+ jídlo'}</button></div>
       <span class="xs mutd">jídelníček ${foodStreak()}. den</span>
     </div>
-  </div>`;
+  </div>
+  </div><div class="c2">
+  <div class="card">
+    <div class="row base"><div class="ttl" style="font-size:24px">Dnes</div><span class="sm mut">${done} / ${todos.length} hotovo</span></div>
+    ${tdHtml}
+    <div class="addrow"><label for="newTodo" class="sr">Nový úkol</label><input id="newTodo" placeholder="Přidat úkol…" enterkeyhint="done" data-enter="addTodo"><button data-act="addTodo">Přidat</button></div>
+  </div>
+  </div></div>`;
 }
 function plantShort(p) { if (p.where === 'voda') return p.roots ? `${p.roots} kořeny${p.leaves ? ' + list' : ''}` : 'čeká'; return p.where || ''; }
 
@@ -265,18 +268,21 @@ function vCalendar() {
   return `
   <div class="row"><a class="back" href="#/domu">‹ Domů</a><span class="sm mut">${(() => { const n = Object.entries(S.events).filter(([d, l]) => d.startsWith(U.calMonth) && l.some(e => e.kind === 'work')).length; return n ? `${n} směn v měsíci` : ''; })()}</span></div>
   <div class="row"><h1 class="h1">${MON[m - 1]} <i>${y}</i></h1><div class="row gap6"><button class="hbtn" data-act="mon" data-n="-1" aria-label="Předchozí měsíc">‹</button><button class="hbtn" data-act="mon" data-n="1" aria-label="Další měsíc">›</button></div></div>
+  <div class="cols"><div class="c1">
   <div class="card" style="padding:12px">
     <div class="calgrid xs mut" style="text-align:center">${DOW.map(d => `<span>${d}</span>`).join('')}</div>
     <div class="calgrid">${cells}</div>
     <div class="chips xs mut" style="gap:14px"><span style="color:#E39A72">● směna</span><span style="color:#B7C27F">● škola</span><span style="color:#F1E6D6">● moje</span><span style="color:#D9B48A">● termín</span></div>
   </div>
+  </div><div class="c2">
   <div class="card cream">
     <div class="ttl" style="font-size:24px">${DOWL[dow(U.sel)]} ${dayNum(U.sel)}. ${fromIso(U.sel).getMonth() + 1}.</div>
     ${list}
     <button class="btn ${ev.some(e => e.kind === 'work') ? 'light' : 'moss'}" data-act="shiftToggle">${ev.some(e => e.kind === 'work') ? 'Odebrat směnu' : `+ Směna ${ROZVRH.smenaCas}`}</button>
     <div class="row gap8"><label for="evTime" class="sr">Čas</label><input id="evTime" class="inp" style="width:90px" placeholder="čas" inputmode="text"><label for="evText" class="sr">Co</label><input id="evText" class="inp" placeholder="Zapsat věc…" data-enter="addEv"></div>
     <button class="btn" data-act="addEv">Přidat</button>
-  </div>`;
+  </div>
+  </div></div>`;
 }
 
 /* ======================================================
@@ -307,17 +313,20 @@ function vMoney() {
   }
   return `
   <div class="row"><h1 class="h1">Peníze</h1><span class="md b" style="color:${weekNet >= 0 ? 'var(--moss)' : 'var(--terra)'}">${sgn(weekNet)} tento týden</span></div>
+  <div class="cols"><div class="c1">
   <div class="card terra hero">
     <div class="row"><span class="md b">Mám teď</span><a href="#/penize/obalky" class="sm b" style="text-decoration:underline;text-underline-offset:3px">nastavit obálky ›</a></div>
     <div class="big">${kc(total)} Kč</div>
     <div class="stack">${stack}</div>
     <div class="stats3">${bal.map(e => `<div><span><span style="display:inline-block;width:8px;height:8px;border-radius:4px;background:${e.c};box-shadow:inset 0 0 0 1px rgba(0,0,0,.3)"></span> ${esc(e.name)}</span><b>${kc(e.b)}</b></div>`).join('')}</div>
   </div>
+  </div><div class="c2">
   <div class="tabs" role="tablist">${tabs.map((x, i) => `<button role="tab" class="${i === t ? 'on' : ''}" style="font-size:12px" data-act="moneyTab" data-i="${i}">${x}</button>`).join('')}</div>
   <div class="card cream" style="gap:6px">
     <div class="row base"><div class="ttl">${title}</div><span class="sm b mutd">${esc(sum)}</span></div>
     <div class="col">${rows}</div>
-  </div>`;
+  </div>
+  </div></div>`;
 }
 function txRow(x) {
   const env = x.type === 'invoice' || x.type === 'out' ? S.envs.find(e => x.alloc && e.id === Object.keys(x.alloc)[0])?.name : null;
@@ -397,6 +406,7 @@ function vShops() {
     <div class="card cream" style="padding:10px 14px;gap:0"><div class="trow head"><span>Den</span><span>Reklamy</span><span>Tržby</span><span>Fulfill</span><span>Zisk</span></div>${rowsT || '<div class="empty">V tomhle období nic. Zapiš první den.</div>'}</div>`;
   }
   return `${head}
+  <div class="cols"><div class="c1">
   <div class="card hero" style="background:${profit >= 0 ? 'var(--moss)' : 'var(--terra)'};color:var(--dark)">
     <span class="md b">Zisk · ${pl.toLowerCase()}</span><div class="big">${sgn(profit)} Kč</div>
     <div class="stats3"><div><span>Tržby</span><b>${kc(rev)}</b></div><div><span>Reklamy</span><b>− ${kc(ads)}</b></div><div><span>Fulfill</span><b>− ${kc(ful)}</b></div></div>
@@ -407,8 +417,10 @@ function vShops() {
     <div class="stats3 mut"><div><span>Nákupy</span><b style="color:var(--ink)">${orders ?? '—'}</b></div><div><span>CPC</span><b style="color:var(--ink)">${cpc != null ? dec2(cpc) + ' Kč' : '—'}</b></div><div><span>CTR</span><b style="color:var(--ink)">${ctr != null ? dec2(ctr) + ' %' : '—'}</b></div></div>
     <button class="xbtn xs mut" style="font-size:11px;text-align:right;min-height:20px" data-act="shopEdit">upravit shop (cena, náklad) ›</button>
   </div>
+  </div><div class="c2">
   <div class="tabs" role="tablist">${['Rychlé odkazy', 'Denní výsledky'].map((x, i) => `<button role="tab" class="${i === t ? 'on' : ''}" data-act="shopTab" data-i="${i}">${x}</button>`).join('')}</div>
-  ${body}`;
+  ${body}
+  </div></div>`;
 }
 function linkTile(l, i, delAct, edit) {
   const c = LPAL[i % LPAL.length]; const ini = esc((l.name || '?').trim()[0]?.toUpperCase() || '?');
@@ -448,12 +460,15 @@ function vSchool() {
   }
   return `
   <div class="row"><h1 class="h1">Škola</h1>${next ? `<span class="pill terra">${esc(next.title)} · ${relDay(next.date)}</span>` : ''}</div>
+  <div class="cols"><div class="c1">
   <div class="card">
     <div class="row base"><div class="ttl">Odkazy</div><div class="row gap8"><span class="sm mut">další škola: ${nextSchool()}</span><button class="xbtn xs mut" style="font-size:11px" data-act="editSchoolLinks">${U.editSchoolLinks ? 'hotovo' : 'upravit'}</button></div></div>
     <div class="tiles" style="grid-template-columns:repeat(5,minmax(0,1fr))">${tiles}<button class="tile add" data-act="linkNew" data-to="school"><span style="font-size:20px">+</span>Přidat</button></div>
   </div>
+  </div><div class="c2">
   <div class="tabs" role="tablist">${['Sdílení', 'Projekty', 'Termíny'].map((x, i) => `<button role="tab" class="${i === tab ? 'on' : ''}" data-act="schoolTab" data-i="${i}">${x}</button>`).join('')}</div>
-  <div class="card cream flat">${rows}</div>`;
+  <div class="card cream flat">${rows}</div>
+  </div></div>`;
 }
 
 /* ======================================================
@@ -485,6 +500,7 @@ function vPlant(id) {
   const photos = (p.entries || []).filter(e => e.photo).length;
   return `
   <div class="row"><a class="back" href="#/rostliny">‹ Rostliny</a><button class="hbtn" data-act="plantEdit" data-id="${p.id}">upravit</button></div>
+  <div class="cols"><div class="c1">
   <div class="col gap4"><h1 class="h1" style="font-size:38px">${esc(p.name)}</h1><span class="md mut">${esc(p.sub)}</span></div>
   <div class="minis"><div class="mini"><span>Kořeny</span><b>${esc(p.roots === '' ? '—' : p.roots)}</b></div><div class="mini"><span>Nové listy</span><b style="color:var(--moss)">${esc(p.leaves === '' ? '—' : p.leaves)}</b></div><div class="mini"><span>Kde je</span><b>${esc(p.where || '—')}</b></div></div>
   ${care}
@@ -496,8 +512,10 @@ function vPlant(id) {
     </div>
     <button class="btn" data-act="entrySave" data-id="${p.id}">Uložit do deníku</button>
   </div>
+  </div><div class="c2">
   <div class="row base"><div class="ttl" style="font-size:24px">Deník</div><span class="sm mut">${(p.entries || []).length} zápisů · ${photos} fotek</span></div>
-  ${ents || '<div class="empty">Zatím žádný zápis. Udělej první fotku.</div>'}`;
+  ${ents || '<div class="empty">Zatím žádný zápis. Udělej první fotku.</div>'}
+  </div></div>`;
 }
 
 /* ======================================================
