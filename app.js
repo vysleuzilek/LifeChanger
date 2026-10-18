@@ -96,10 +96,76 @@ function load() {
   return defaults();
 }
 let S = load();
-if (!S.activeShop) S.activeShop = S.shops[0]?.id || null;
-if (!S.cats || !S.cats.length) S.cats = DEFAULT_CATS.map(c => ({ ...c }));
-Object.values(S.events).forEach(l => l.forEach(e => { if (!e.cat) e.cat = e.kind === 'work' ? 'prace' : 'udalosti'; delete e.kind; }));
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Úložiště je plné'); } }
+function migrate() {
+  if (!S.activeShop || !S.shops.some(x => x.id === S.activeShop)) S.activeShop = S.shops[0]?.id || null;
+  if (!S.cats || !S.cats.length) S.cats = DEFAULT_CATS.map(c => ({ ...c }));
+  Object.values(S.events).forEach(l => l.forEach(e => { if (!e.cat) e.cat = e.kind === 'work' ? 'prace' : 'udalosti'; delete e.kind; }));
+}
+migrate();
+function save() {
+  const json = JSON.stringify(S);
+  try { localStorage.setItem(KEY, json); } catch (e) { toast('Úložiště je plné'); }
+  if (CLOUD.user) { clearTimeout(CLOUD.timer); setSync('ukládám…'); CLOUD.timer = setTimeout(() => pushNow().then(() => setSync('synchronizováno')).catch(() => setSync('neuloženo – zkontroluj internet')), 600); }
+}
+
+/* ---------- Cloud (Firebase): sdílení mezi zařízeními ---------- */
+const CLOUD = { enabled: false, authReady: false, user: null, db: null, unsub: null, timer: null, lastJson: '', status: '' };
+function setSync(t) { CLOUD.status = t; const el = $('#syncState'); if (el) el.textContent = t; }
+const mainRef = () => CLOUD.db.collection('users').doc(CLOUD.user.uid).collection('data').doc('main');
+const fileRef = id => CLOUD.db.collection('users').doc(CLOUD.user.uid).collection('files').doc(id);
+function cloudInit() {
+  const cfg = window.FIREBASE_CONFIG;
+  if (!cfg || !cfg.apiKey || cfg.apiKey.startsWith('SEM') || typeof firebase === 'undefined') return;
+  try { firebase.initializeApp(cfg); CLOUD.db = firebase.firestore(); CLOUD.enabled = true; } catch (e) { console.warn(e); return; }
+  firebase.auth().onAuthStateChanged(u => {
+    CLOUD.authReady = true; CLOUD.user = u;
+    if (u) cloudStart(); else { CLOUD.unsub?.(); CLOUD.unsub = null; }
+    render();
+  });
+}
+function localHasData() { return S.tx.length || Object.keys(S.events).length || Object.keys(S.todos).length || S.shops.some(x => x.days.length) || S.plants.some(p => p.entries.length || p.cover) || S.school.share.length; }
+async function pushNow() { if (!CLOUD.user) return; const json = JSON.stringify(S); CLOUD.lastJson = json; await mainRef().set({ json, updated: firebase.firestore.FieldValue.serverTimestamp() }); }
+function applyRemote(json) {
+  try { S = Object.assign(defaults(), JSON.parse(json)); migrate(); CLOUD.lastJson = json; localStorage.setItem(KEY, json); render(); } catch (e) { console.warn(e); }
+}
+async function cloudStart() {
+  setSync('připojuji…');
+  try {
+    const snap = await mainRef().get();
+    const synced = localStorage.getItem('lc-synced') === CLOUD.user.uid;
+    if (snap.exists && snap.data().json) {
+      const remote = snap.data().json;
+      if (!synced && localHasData() && remote !== JSON.stringify(S)) {
+        if (confirm('V cloudu už máš uložená data.\n\nOK = načíst data z cloudu do tohoto zařízení\nZrušit = nahrát data z TOHOTO zařízení do cloudu (přepíše cloud)')) applyRemote(remote);
+        else await pushNow();
+      } else applyRemote(remote);
+    } else await pushNow();
+    localStorage.setItem('lc-synced', CLOUD.user.uid);
+    CLOUD.unsub?.();
+    CLOUD.unsub = mainRef().onSnapshot(sn => { if (!sn.exists || sn.metadata.hasPendingWrites) return; const j = sn.data().json; if (j && j !== CLOUD.lastJson) applyRemote(j); });
+    setSync('synchronizováno');
+    uploadMissingFiles();
+  } catch (e) { console.warn(e); setSync('chyba připojení'); toast('Nepodařilo se připojit ke cloudu'); }
+}
+const blobToB64 = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
+async function cloudPutFile(id, blob, name) {
+  if (!CLOUD.user) return;
+  const data = await blobToB64(blob);
+  if (data.length > 950000) { toast('Soubor je moc velký na sdílení (max cca 650 kB) – zůstane jen v tomhle zařízení'); return; }
+  await fileRef(id).set({ data, name: name || '', type: blob.type || '' });
+  const up = JSON.parse(localStorage.getItem('lc-up') || '[]'); up.push(id); localStorage.setItem('lc-up', JSON.stringify(up.slice(-3000)));
+}
+async function cloudGetFile(id) {
+  if (!CLOUD.user) return null;
+  const d = await fileRef(id).get(); if (!d.exists) return null;
+  const blob = await (await fetch(d.data().data)).blob(); await IDB.put(id, blob); return blob;
+}
+async function delFile(id) { await IDB.del(id); urlCache.delete(id); if (CLOUD.user) fileRef(id).delete().catch(() => { }); }
+function allFileIds() { const ids = []; S.tx.forEach(t => t.fileId && ids.push(t.fileId)); S.school.share.forEach(x => x.fileId && ids.push(x.fileId)); S.plants.forEach(p => { if (p.cover) ids.push(p.cover); (p.entries || []).forEach(e => e.photo && ids.push(e.photo)); }); return ids; }
+async function uploadMissingFiles() {
+  const up = new Set(JSON.parse(localStorage.getItem('lc-up') || '[]'));
+  for (const id of allFileIds()) { if (up.has(id)) continue; try { const b = await IDB.get(id); if (!b) continue; const d = await fileRef(id).get(); if (!d.exists) await cloudPutFile(id, b); else { up.add(id); localStorage.setItem('lc-up', JSON.stringify([...up])); } } catch (e) { } }
+}
 
 /* Soubory a fotky (IndexedDB) */
 const IDB = (() => {
@@ -111,7 +177,7 @@ const IDB = (() => {
 const urlCache = new Map();
 async function fileUrl(id) {
   if (urlCache.has(id)) return urlCache.get(id);
-  const b = await IDB.get(id); if (!b) return '';
+  let b = await IDB.get(id); if (!b) { try { b = await cloudGetFile(id); } catch (e) { } } if (!b) return '';
   const u = URL.createObjectURL(b); urlCache.set(id, u); return u;
 }
 function compressImage(file, max = 1280, q = 0.72) {
@@ -130,7 +196,9 @@ function compressImage(file, max = 1280, q = 0.72) {
 async function storeFile(file) {
   const id = 'f_' + uid();
   const blob = file.type.startsWith('image/') ? await compressImage(file) : file;
-  await IDB.put(id, blob); return id;
+  await IDB.put(id, blob);
+  try { await cloudPutFile(id, blob, file.name); } catch (e) { toast('Soubor se zatím nenahrál do cloudu'); }
+  return id;
 }
 
 /* ---------- UI stav (neukládá se) ---------- */
@@ -162,7 +230,7 @@ function nextSchool() {
   return '—';
 }
 function plantDue(p) { return p.interval > 0 && (!p.lastCare || daysBetween(p.lastCare, today()) >= p.interval); }
-const careWord = p => p.where === 'voda' ? 'vyměnit vodu' : 'zalít';
+const careWord = p => (p.careName || '').trim() || (p.where === 'voda' ? 'vyměnit vodu' : 'zalít');
 function foodStreak() {
   const set = new Set(S.food); let d = set.has(today()) ? today() : addDays(today(), -1), n = 0;
   while (set.has(d)) { n++; d = addDays(d, -1); }
@@ -181,6 +249,9 @@ function render() {
   const [r, a] = route();
   const views = { domu: vHome, kalendar: vCalendar, penize: a === 'obalky' ? vEnvelopes : vMoney, shopy: vShops, skola: vSchool, rostliny: vPlants, rostlina: () => vPlant(a) };
   const fn = views[r] || vHome;
+  const gate = CLOUD.enabled && (!CLOUD.authReady || (!CLOUD.user && localStorage.getItem('lc-local') !== '1'));
+  $('#nav').hidden = gate;
+  if (gate) { $('#fab').hidden = true; $('#app').innerHTML = CLOUD.authReady ? vLogin() : '<div class="empty" style="margin-top:30vh;color:var(--muted)">Načítám…</div>'; return; }
   $('#app').innerHTML = fn();
   const top = { kalendar: 'domu', rostlina: 'rostliny' }[r] || r;
   $('.nav-in').innerHTML = NAV.map(([k, l, ic]) => `<button class="${top === k ? 'on' : ''}" data-act="nav" data-to="${k}" aria-label="${l}">${svg(ic)}${l}</button>`).join('');
@@ -249,6 +320,31 @@ function vHome() {
     <div class="addrow"><label for="newTodo" class="sr">Nový úkol</label><input id="newTodo" placeholder="Přidat úkol…" enterkeyhint="done" data-enter="addTodo"><button data-act="addTodo">Přidat</button></div>
   </div>
   </div></div>`;
+}
+function vLogin() {
+  return `<div class="col gap12" style="max-width:420px;margin:6vh auto 0;width:100%">
+  <h1 class="h1" style="font-size:44px">Life <i>Changer</i></h1>
+  <div class="md mut">Přihlas se, ať máš všechno stejné na mobilu i na počítači.</div>
+  <div class="card cream">
+    <label class="lbl" for="lgEmail">E-mail</label><input id="lgEmail" class="inp" type="email" autocomplete="email" inputmode="email">
+    <label class="lbl" for="lgPass">Heslo</label><input id="lgPass" class="inp" type="password" autocomplete="current-password" data-enter="login">
+    <button class="btn" data-act="login">Přihlásit</button>
+    <button class="btn light" data-act="register">Vytvořit účet</button>
+    <button class="btn ghost" style="color:var(--muted-d)" data-act="resetPass">Zapomenuté heslo</button>
+  </div>
+  <button class="btn ghost" style="color:var(--muted)" data-act="localMode">Pokračovat bez přihlášení (jen tohle zařízení)</button>
+  </div>`;
+}
+function authErr(e) {
+  const c = e?.code || '';
+  if (/invalid-credential|wrong-password|user-not-found|invalid-login/.test(c)) return 'Špatný e-mail nebo heslo';
+  if (c.includes('email-already-in-use')) return 'Účet s tímhle e-mailem už existuje – dej Přihlásit';
+  if (c.includes('weak-password')) return 'Heslo musí mít aspoň 6 znaků';
+  if (c.includes('invalid-email')) return 'Neplatný e-mail';
+  if (c.includes('too-many-requests')) return 'Moc pokusů, zkus to za chvíli';
+  if (c.includes('network')) return 'Chybí internet';
+  if (c.includes('operation-not-allowed')) return 'Ve Firebase není zapnuté přihlášení e-mailem';
+  return 'Chyba: ' + (e?.message || c);
 }
 function plantShort(p) { if (p.where === 'voda') return p.roots ? `${p.roots} kořeny${p.leaves ? ' + list' : ''}` : 'čeká'; return p.where || ''; }
 
@@ -636,7 +732,8 @@ const SHEETS = {
     <label class="lbl" for="plSub">Druh / odkud je</label><input id="plSub" class="inp" value="${esc(p.sub)}" placeholder="Monstera · z Futuru">
     <label class="lbl" for="plWhere">Kde je</label><input id="plWhere" class="inp" value="${esc(p.where)}" list="whereList"><datalist id="whereList"><option value="voda"><option value="substrát"><option value="kůra + hlína"><option value="substrát + hlína"></datalist>
     <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plRoots">Kořeny</label><input id="plRoots" class="inp" inputmode="numeric" value="${esc(p.roots)}"></div><div class="col gap4 grow"><label class="lbl" for="plLeaves">Nové listy</label><input id="plLeaves" class="inp" inputmode="numeric" value="${esc(p.leaves)}"></div></div>
-    <label class="lbl" for="plInt">Připomenout péči každých (dní, 0 = vypnuto)</label><input id="plInt" class="inp" inputmode="numeric" value="${esc(p.interval)}">
+    <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plCare">Jaká péče</label><input id="plCare" class="inp" value="${esc(p.careName || '')}" placeholder="${p.where === 'voda' ? 'vyměnit vodu' : 'zalít'}" list="careList"><datalist id="careList"><option value="zalít"><option value="vyměnit vodu"><option value="pohnojit"><option value="postříkat listy"><option value="otočit k oknu"><option value="zkontrolovat kořeny"></datalist></div><div class="col gap4" style="width:120px"><label class="lbl" for="plInt">Každých (dní)</label><input id="plInt" class="inp" inputmode="numeric" value="${esc(p.interval)}"></div></div>
+    <div class="note">0 dní = připomínka vypnutá.</div>
     <button class="btn" data-act="plantSave" data-id="${id || ''}">Uložit</button>
     ${id ? `<button class="btn ghost" data-act="plantDel" data-id="${id}">Smazat rostlinu</button>` : ''}`;
   },
@@ -658,7 +755,7 @@ const SHEETS = {
   },
   settings() {
     return `<div class="row"><span class="md b">Nastavení</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
-    <div class="note">Všechna data jsou zatím uložená jen v tomhle zařízení. Občas si stáhni zálohu.</div>
+    ${CLOUD.enabled ? (CLOUD.user ? `<div class="card" style="background:#fff;gap:4px"><span class="lbl">Přihlášen</span><span class="md b">${esc(CLOUD.user.email)}</span><span class="sm mutd">Cloud: <span id="syncState">${esc(CLOUD.status)}</span></span></div><button class="btn light" data-act="logout">Odhlásit se</button>` : '<div class="note">Nejsi přihlášený – data jsou jen v tomhle zařízení.</div><button class="btn moss" data-act="goLogin">Přihlásit se</button>') : '<div class="note">Cloud není nastavený (firebase-config.js) – data jsou jen v tomhle zařízení.</div>'}
     <button class="btn" data-act="backup">Stáhnout zálohu (bez fotek)</button>
     <label class="btn light filebtn" style="display:flex;align-items:center;justify-content:center">Nahrát zálohu<input type="file" accept="application/json" data-file="restore"></label>
     <div class="note">Kategorie a barvy kalendáře upravíš v Kalendáři → upravit barvy.</div>`;
@@ -744,7 +841,7 @@ const ACT = {
   },
   txOpen: el => openSheet('txView', el.dataset.id),
   txTogglePaid: el => { const x = S.tx.find(t => t.id === el.dataset.id); x.paid = !x.paid; save(); drawSheet(); render(); },
-  txDel: async el => { if (!confirm('Opravdu smazat?')) return; const x = S.tx.find(t => t.id === el.dataset.id); if (x?.fileId) await IDB.del(x.fileId); S.tx = S.tx.filter(t => t.id !== el.dataset.id); save(); closeSheet(); render(); },
+  txDel: async el => { if (!confirm('Opravdu smazat?')) return; const x = S.tx.find(t => t.id === el.dataset.id); if (x?.fileId) await delFile(x.fileId); S.tx = S.tx.filter(t => t.id !== el.dataset.id); save(); closeSheet(); render(); },
   txFileOpen: async el => { const x = S.tx.find(t => t.id === el.dataset.id); const u = await fileUrl(x.fileId); if (u) window.open(u, '_blank'); },
   debtNew: () => openSheet('debtNew'),
   debtSave: () => { const who = val('dbWho'), a = num(val('dbAmt')); if (!who || !a) return; S.debts.push({ id: uid(), who, amount: a, note: val('dbNote') }); save(); closeSheet(); render(); },
@@ -799,7 +896,7 @@ const ACT = {
   },
   shareCopy: async el => { const x = S.school.share.find(s => s.id === el.dataset.id); try { await navigator.clipboard.writeText(x.text); toast('Zkopírováno'); } catch (e) { toast('Nepodařilo se zkopírovat'); } },
   shareDl: async el => { const x = S.school.share.find(s => s.id === el.dataset.id); const u = await fileUrl(x.fileId); if (!u) return toast('Soubor nenalezen'); const a = document.createElement('a'); a.href = u; a.download = x.fileName; document.body.appendChild(a); a.click(); a.remove(); },
-  shareDel: async el => { const x = S.school.share.find(s => s.id === el.dataset.id); if (x?.fileId) await IDB.del(x.fileId); S.school.share = S.school.share.filter(s => s.id !== el.dataset.id); save(); render(); },
+  shareDel: async el => { const x = S.school.share.find(s => s.id === el.dataset.id); if (x?.fileId) await delFile(x.fileId); S.school.share = S.school.share.filter(s => s.id !== el.dataset.id); save(); render(); },
   projOpen: el => openSheet('project', el.dataset.id),
   projSave: el => { const n = val('prName'); if (!n) return; const id = el.dataset.id; const data = { name: n, note: val('prNote'), progress: num(val('prProg')) }; if (id) Object.assign(S.school.projects.find(p => p.id === id), data); else S.school.projects.push({ id: uid(), ...data }); save(); closeSheet(); render(); },
   projDel: el => { if (!confirm('Smazat projekt?')) return; S.school.projects = S.school.projects.filter(p => p.id !== el.dataset.id); save(); closeSheet(); render(); },
@@ -811,12 +908,12 @@ const ACT = {
   plantEdit: el => openSheet('plant', el.dataset.id),
   plantSave: el => {
     const n = val('plName'); if (!n) return; const id = el.dataset.id;
-    const data = { name: n, sub: val('plSub'), where: val('plWhere'), roots: val('plRoots') === '' ? '' : num(val('plRoots')), leaves: val('plLeaves') === '' ? '' : num(val('plLeaves')), interval: num(val('plInt')) };
+    const data = { name: n, sub: val('plSub'), where: val('plWhere'), roots: val('plRoots') === '' ? '' : num(val('plRoots')), leaves: val('plLeaves') === '' ? '' : num(val('plLeaves')), interval: num(val('plInt')), careName: val('plCare') };
     if (id) Object.assign(S.plants.find(p => p.id === id), data); else S.plants.push({ id: uid(), lastCare: null, entries: [], ...data });
     save(); closeSheet(); render();
   },
-  plantDel: async el => { if (!confirm('Smazat rostlinu i s deníkem?')) return; const p = S.plants.find(x => x.id === el.dataset.id); for (const e of p.entries) if (e.photo) await IDB.del(e.photo); if (p.cover) await IDB.del(p.cover); S.plants = S.plants.filter(x => x.id !== el.dataset.id); save(); closeSheet(); go('rostliny'); },
-  careDone: el => { const p = S.plants.find(x => x.id === el.dataset.id); p.lastCare = today(); p.entries.unshift({ date: today(), text: p.where === 'voda' ? 'Vyměněna voda' : 'Zalito', photo: null }); save(); render(); toast('Hotovo ✓'); },
+  plantDel: async el => { if (!confirm('Smazat rostlinu i s deníkem?')) return; const p = S.plants.find(x => x.id === el.dataset.id); for (const e of p.entries) if (e.photo) await delFile(e.photo); if (p.cover) await delFile(p.cover); S.plants = S.plants.filter(x => x.id !== el.dataset.id); save(); closeSheet(); go('rostliny'); },
+  careDone: el => { const p = S.plants.find(x => x.id === el.dataset.id); p.lastCare = today(); p.entries.unshift({ date: today(), text: careWord(p)[0].toUpperCase() + careWord(p).slice(1) + ' ✓', photo: null }); save(); render(); toast('Hotovo ✓'); },
   entrySave: async el => {
     const p = S.plants.find(x => x.id === el.dataset.id), D = U.pdraft; const t = String(D.text).trim();
     if (!t && !D.file) return toast('Přidej fotku nebo text');
@@ -831,23 +928,29 @@ const ACT = {
   entryEditSave: async el => {
     const p = S.plants.find(x => x.id === el.dataset.id), e = p.entries[+el.dataset.i];
     e.text = val('enText'); e.date = val('enDate') || e.date;
-    if (U.entryFile) { const id = await storeFile(U.entryFile); if (e.photo) await IDB.del(e.photo); e.photo = id; }
-    else if (U.entryNoPhoto && e.photo) { await IDB.del(e.photo); e.photo = null; }
+    if (U.entryFile) { const id = await storeFile(U.entryFile); if (e.photo) await delFile(e.photo); e.photo = id; }
+    else if (U.entryNoPhoto && e.photo) { await delFile(e.photo); e.photo = null; }
     p.entries.sort((a, b) => b.date.localeCompare(a.date));
     U.entryFile = null; U.entryUrl = ''; U.entryNoPhoto = false;
     save(); closeSheet(); render(); toast('Zápis upraven');
   },
-  entryDel: async el => { const p = S.plants.find(x => x.id === el.dataset.id); const [e] = p.entries.splice(+el.dataset.i, 1); if (e?.photo) await IDB.del(e.photo); save(); closeSheet(); render(); },
+  entryDel: async el => { const p = S.plants.find(x => x.id === el.dataset.id); const [e] = p.entries.splice(+el.dataset.i, 1); if (e?.photo) await delFile(e.photo); save(); closeSheet(); render(); },
   /* záloha */
+  login: () => { const e = val('lgEmail'), p = $('#lgPass')?.value || ''; if (!e || !p) return toast('Vyplň e-mail a heslo'); firebase.auth().signInWithEmailAndPassword(e, p).catch(er => toast(authErr(er))); },
+  register: () => { const e = val('lgEmail'), p = $('#lgPass')?.value || ''; if (!e || !p) return toast('Vyplň e-mail a heslo'); firebase.auth().createUserWithEmailAndPassword(e, p).then(() => toast('Účet vytvořen')).catch(er => toast(authErr(er))); },
+  resetPass: () => { const e = val('lgEmail'); if (!e) return toast('Napiš nejdřív e-mail'); firebase.auth().sendPasswordResetEmail(e).then(() => toast('Poslal jsem ti e-mail na obnovu hesla')).catch(er => toast(authErr(er))); },
+  localMode: () => { localStorage.setItem('lc-local', '1'); render(); },
+  goLogin: () => { localStorage.removeItem('lc-local'); closeSheet(); render(); },
+  logout: () => { if (!confirm('Odhlásit se? Data v tomhle zařízení zůstanou.')) return; localStorage.removeItem('lc-local'); localStorage.removeItem('lc-synced'); firebase.auth().signOut(); closeSheet(); },
   backup: () => { const b = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `lifechanger-zaloha-${today()}.json`; a.click(); }
 };
 const FILE = {
   entryPhoto: el => { const f = el.files[0]; if (!f) return; U.entryFile = f; U.entryUrl = URL.createObjectURL(f); U.entryNoPhoto = false; drawSheet(); },
-  plantCover: async el => { const f = el.files[0]; if (!f) return; const p = S.plants.find(x => x.id === el.dataset.id); try { const id = await storeFile(f); if (p.cover) await IDB.del(p.cover); p.cover = id; save(); render(); toast('Fotka uložena'); } catch (e) { toast('Fotku se nepodařilo uložit'); } },
+  plantCover: async el => { const f = el.files[0]; if (!f) return; const p = S.plants.find(x => x.id === el.dataset.id); try { const id = await storeFile(f); if (p.cover) await delFile(p.cover); p.cover = id; save(); render(); toast('Fotka uložena'); } catch (e) { toast('Fotku se nepodařilo uložit'); } },
   plantPhoto: el => { const f = el.files[0]; if (!f) return; if (U.pdraft.url) URL.revokeObjectURL(U.pdraft.url); U.pdraft.file = f; U.pdraft.url = URL.createObjectURL(f); render(); },
   txFile: el => { U.draft.file = el.files[0] || null; drawSheet(); txPreview(); },
   shareFile: el => { U.draft.file = el.files[0] || null; drawSheet(); },
-  restore: el => { const f = el.files[0]; if (!f) return; f.text().then(t => { const d = JSON.parse(t); if (!d.v) throw 0; if (!confirm('Přepsat současná data zálohou?')) return; S = Object.assign(defaults(), d); save(); closeSheet(); render(); toast('Záloha nahrána'); }).catch(() => toast('Tohle není záloha Life Changeru')); }
+  restore: el => { const f = el.files[0]; if (!f) return; f.text().then(t => { const d = JSON.parse(t); if (!d.v) throw 0; if (!confirm('Přepsat současná data zálohou?')) return; S = Object.assign(defaults(), d); migrate(); save(); closeSheet(); render(); toast('Záloha nahrána'); }).catch(() => toast('Tohle není záloha Life Changeru')); }
 };
 
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el) return; const f = ACT[el.dataset.act]; if (f) { if (el.tagName === 'A' && el.dataset.act !== 'nav') { /* necháme odkaz fungovat */ } f(el, e); } });
@@ -855,6 +958,7 @@ document.addEventListener('input', e => { const el = e.target; if (el.dataset.bi
 document.addEventListener('change', e => { const el = e.target; if (el.dataset.file) FILE[el.dataset.file]?.(el); if (el.dataset.bind && el.type === 'date') { setPath(el.dataset.bind, el.value); if (U.sheetFn !== 'tx') LIVE.dayPrev(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset?.enter) { e.preventDefault(); ACT[e.target.dataset.enter]?.(e.target, e); } });
 
+cloudInit();
 render();
 LIVE.dayPrev();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
