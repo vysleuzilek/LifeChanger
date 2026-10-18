@@ -1,11 +1,13 @@
 /* Life Changer – v1 (data se ukládají v zařízení; Firebase přijde později) */
 'use strict';
 
-/* ---------- Nastavení rozvrhu (uprav si podle sebe) ---------- */
-const ROZVRH = {
-  skola: { 1: '8–16', 3: '8–17' },   // 0 = Po, 1 = Út, 3 = Čt
-  smenaCas: '11–21'                  // výchozí čas směny (směny si přidáváš sám v kalendáři)
-};
+/* ---------- Výchozí kategorie kalendáře (barvy si změníš v kalendáři → upravit) ---------- */
+const DEFAULT_CATS = [
+  { id: 'udalosti', name: 'Události', color: '#FF5A2A' },
+  { id: 'prace', name: 'Práce', color: '#E00000' },
+  { id: 'skola', name: 'Škola', color: '#F8C12C' },
+  { id: 'platby', name: 'Platby', color: '#C779F5' }
+];
 
 /* ---------- Pomocníci ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -66,7 +68,7 @@ const KEY = 'lifechanger-v1';
 function defaults() {
   return {
     v: 1,
-    todos: {}, events: {}, gym: [], food: [],
+    todos: {}, events: {}, gym: [], food: [], cats: DEFAULT_CATS.map(c => ({ ...c })),
     envs: [{ id: uid(), name: 'Volné', pct: 100 }],
     tx: [], debts: [],
     shops: [{ id: uid(), name: 'Tlapramen', price: '', cost: '', days: [], links: [
@@ -95,6 +97,8 @@ function load() {
 }
 let S = load();
 if (!S.activeShop) S.activeShop = S.shops[0]?.id || null;
+if (!S.cats || !S.cats.length) S.cats = DEFAULT_CATS.map(c => ({ ...c }));
+Object.values(S.events).forEach(l => l.forEach(e => { if (!e.cat) e.cat = e.kind === 'work' ? 'prace' : 'udalosti'; delete e.kind; }));
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Úložiště je plné'); } }
 
 /* Soubory a fotky (IndexedDB) */
@@ -141,23 +145,20 @@ const U = {
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2200); }
 
 /* ---------- Výpočty ---------- */
-function autoEvents(s) {
-  const w = dow(s), out = [];
-  if (ROZVRH.skola[w]) out.push({ kind: 'school', time: ROZVRH.skola[w], text: 'Škola' });
-  return out;
-}
+const catOf = id => S.cats.find(c => c.id === id) || S.cats[0] || { id: '', name: '', color: '#BFAE99' };
 function dayEvents(s) {
-  const a = autoEvents(s);
-  (S.events[s] || []).forEach(e => a.push({ kind: e.kind || 'mine', time: e.time || '', text: e.text, id: e.id }));
-  S.school.deadlines.filter(d => d.date === s).forEach(d => a.push({ kind: 'deadline', time: 'termín', text: d.title }));
+  const a = (S.events[s] || []).map(e => ({ cat: e.cat, color: catOf(e.cat).color, time: e.time || '', text: e.text, id: e.id }));
+  a.sort((x, y) => (x.time || '99').localeCompare(y.time || '99', 'cs', { numeric: true }));
+  S.school.deadlines.filter(d => d.date === s).forEach(d => a.push({ cat: 'skola', color: catOf('skola').color, time: 'termín', text: d.title }));
   return a;
 }
+const evDots = (s, max = 4) => { const seen = []; dayEvents(s).forEach(e => { if (!seen.includes(e.color)) seen.push(e.color); }); return seen.slice(0, max).map(c => `<span style="background:${c}"></span>`).join(''); };
 const counts = t => !(t.type === 'invoice' && !t.paid);
 function envBalance(id) { return S.tx.filter(counts).reduce((a, t) => a + (t.alloc?.[id] || 0), 0); }
 function totalMoney() { return S.tx.filter(counts).reduce((a, t) => a + Object.values(t.alloc || {}).reduce((x, y) => x + y, 0), 0); }
 function signed(t) { return (t.type === 'in' || t.type === 'shift') ? t.amount : -t.amount; }
 function nextSchool() {
-  for (let i = 0; i < 14; i++) { const s = addDays(today(), i); const w = dow(s); if (ROZVRH.skola[w]) return `${i === 0 ? 'dnes' : i === 1 ? 'zítra' : DOW[w]} ${ROZVRH.skola[w]}`; }
+  for (let i = 0; i < 30; i++) { const s = addDays(today(), i); const e = (S.events[s] || []).filter(x => x.cat === 'skola').sort((a, b) => (a.time || '').localeCompare(b.time || ''))[0]; if (e) return `${i === 0 ? 'dnes' : i === 1 ? 'zítra' : shortD(s)}${e.time ? ' ' + e.time : ''}`; }
   return '—';
 }
 function plantDue(p) { return p.interval > 0 && (!p.lastCare || daysBetween(p.lastCare, today()) >= p.interval); }
@@ -208,23 +209,24 @@ function closeSheet() { U.sheetFn = null; drawSheet(); }
    ====================================================== */
 function vHome() {
   const t = today(), ws = weekStart(t);
+  if (!U.homeSel || weekStart(U.homeSel) !== ws) U.homeSel = t;
+  const hs = U.homeSel;
   const week = [...Array(7)].map((_, i) => addDays(ws, i)).map(s => {
-    const ev = dayEvents(s), has = k => ev.some(e => e.kind === k);
-    const dots = [['work', '#E39A72'], ['school', '#B7C27F'], ['mine', s === t ? '#2C2118' : '#F1E6D6'], ['deadline', '#D9B48A']].filter(([k]) => has(k)).map(([, c]) => `<span style="background:${c}"></span>`).join('');
-    return `<div class="wd ${s === t ? 'today' : ''}"><span>${DOW[dow(s)]}</span><b class="wdn">${dayNum(s)}</b><span class="dots">${dots || (s === t ? '' : '<span style="border:1px solid #7E6C5A;box-sizing:border-box"></span>')}</span></div>`;
+    const dots = evDots(s), on = s === hs;
+    return `<button class="wd ${on ? 'today' : ''} ${s === t ? 'isnow' : ''}" data-act="homeDay" data-d="${s}" aria-label="${DOWL[dow(s)]} ${dayNum(s)}."><span>${DOW[dow(s)]}</span><b class="wdn">${dayNum(s)}</b><span class="dots">${dots || '<span style="border:1px solid #7E6C5A;box-sizing:border-box"></span>'}</span></button>`;
   }).join('');
   const due = S.plants.filter(plantDue).length;
   const tiles = S.plants.map(p => { const ph = plantPhoto(p); const w = p.where === 'voda' && !p.roots && !p.leaves;
     return `<a class="ptile ${w ? 'wait' : ''} ${ph ? 'has' : ''}" href="#/rostlina/${p.id}">${ph ? `<img data-img="${ph}" alt="${esc(p.name)}">` : svg(w ? 'stem' : 'sprout', 34, 1.6, w ? '#8A6F5A' : '#4F5A2A')}<span class="sm b">${esc(p.name)}</span><span class="xs ${w ? 'mutd' : 'ok'}">${esc(plantShort(p))}</span></a>`; }).join('');
-  const todos = S.todos[t] || [];
-  const tdHtml = todos.length ? todos.map(x => `<div class="todo"><button class="tbtn" data-act="todo" data-id="${x.id}"><span class="cbox ${x.done ? 'on' : ''}">${x.done ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2C2118" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>' : ''}</span><span class="${x.done ? 'done-t' : ''}">${esc(x.text)}</span></button><button class="xbtn" data-act="todoDel" data-id="${x.id}" aria-label="Smazat úkol">×</button></div>`).join('') : '<div class="empty">Na dnešek nic. Přidej si úkol.</div>';
+  const todos = S.todos[hs] || [];
+  const tdHtml = todos.length ? todos.map(x => `<div class="todo"><button class="tbtn" data-act="todo" data-id="${x.id}"><span class="cbox ${x.done ? 'on' : ''}">${x.done ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2C2118" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>' : ''}</span><span class="${x.done ? 'done-t' : ''}">${esc(x.text)}</span></button><button class="xbtn" data-act="todoDel" data-id="${x.id}" aria-label="Smazat úkol">×</button></div>`).join('') : '<div class="empty">Žádné úkoly. Přidej si úkol.</div>';
   const done = todos.filter(x => x.done).length;
   const gymW = S.gym.filter(d => weekStart(d) === ws).length;
   const gymToday = S.gym.includes(t), foodToday = S.food.includes(t);
   const gd = [1, 2, 3].map(i => `<span style="flex:1;height:8px;border-radius:4px;background:${gymW >= i ? '#4F5A2A' : '#E3D5C3'}"></span>`).join('');
   return `
   <div class="row"><h1 class="h1">Life <i>Changer</i></h1><div class="row gap8"><span class="sm mut">${shortD(t)}</span><button class="xbtn" data-act="settings" aria-label="Nastavení">${svg('dots')}</button></div></div>
-  <a href="#/kalendar" class="col gap6" style="text-decoration:none" aria-label="Otevřít kalendář"><div class="week">${week}</div><div class="xs mut" style="text-align:right">otevřít kalendář ›</div></a>
+  <div class="col gap6"><div class="week">${week}</div><a href="#/kalendar" class="xs mut" style="text-align:right;text-decoration:none;padding:4px 0">otevřít kalendář ›</a></div>
   <div class="cols"><div class="c1">
   <div class="card cream">
     <div class="row base"><div class="ttl" style="font-size:26px">Moje rostliny</div><a href="#/rostliny" class="sm b" style="text-decoration:none">${due ? `péče: ${due}` : 'vše ok'} ›</a></div>
@@ -241,8 +243,8 @@ function vHome() {
   </div>
   </div><div class="c2">
   <div class="card">
-    <div class="row base"><div class="ttl" style="font-size:24px">Dnes</div><span class="sm mut">${done} / ${todos.length} hotovo</span></div>
-    ${(() => { const ev = dayEvents(t); const col = { work: '#E39A72', school: '#B7C27F', mine: '#F1E6D6', deadline: '#D9B48A' }; return ev.length ? `<a href="#/kalendar" class="col" style="text-decoration:none;gap:2px;padding-bottom:6px;border-bottom:1px solid var(--card2)">${ev.map(e => `<div class="ev"><span class="bar4" style="background:${col[e.kind]}"></span><span class="sm mut" style="width:56px;flex-shrink:0">${esc(e.time || '')}</span><span class="grow">${esc(e.text)}</span></div>`).join('')}</a>` : ''; })()}
+    <div class="row base"><div class="ttl" style="font-size:24px">${hs === t ? 'Dnes' : hs === addDays(t, 1) ? 'Zítra' : hs === addDays(t, -1) ? 'Včera' : DOWL[dow(hs)] + ' ' + dayNum(hs) + '.'}</div><span class="sm mut">${done} / ${todos.length} hotovo</span></div>
+    ${(() => { const ev = dayEvents(hs); return ev.length ? `<div class="col" style="gap:2px;padding-bottom:6px;border-bottom:1px solid var(--card2)">${ev.map(e => `<div class="ev"><span class="bar4" style="background:${e.color}"></span><span class="sm mut" style="width:56px;flex-shrink:0">${esc(e.time || '')}</span><span class="grow">${esc(e.text)}</span></div>`).join('')}</div>` : '<div class="note mut" style="color:var(--muted)">V kalendáři na tenhle den nic.</div>'; })()}
     ${tdHtml}
     <div class="addrow"><label for="newTodo" class="sr">Nový úkol</label><input id="newTodo" placeholder="Přidat úkol…" enterkeyhint="done" data-enter="addTodo"><button data-act="addTodo">Přidat</button></div>
   </div>
@@ -259,29 +261,28 @@ function vCalendar() {
   let cells = '';
   for (let i = 0; i < lead; i++) cells += '<span class="cday empty"></span>';
   for (let d = 1; d <= dim; d++) {
-    const s = `${y}-${pad(m)}-${pad(d)}`, ev = dayEvents(s), sel = s === U.sel;
-    const has = k => ev.some(e => e.kind === k);
-    const dots = [['work', '#E39A72'], ['school', '#B7C27F'], ['mine', sel ? '#2C2118' : '#F1E6D6'], ['deadline', '#D9B48A']].filter(([k]) => has(k)).map(([, c]) => `<span style="background:${c}"></span>`).join('');
+    const s = `${y}-${pad(m)}-${pad(d)}`, sel = s === U.sel;
+    const dots = evDots(s);
     cells += `<button class="cday ${sel ? 'sel' : ''} ${s === today() ? 'today' : ''}" data-act="pickDay" data-d="${s}" aria-label="${d}. ${m}."><span>${d}</span><span class="dots">${dots}</span></button>`;
   }
   const ev = dayEvents(U.sel);
-  const col = { work: '#E39A72', school: '#7E8A45', mine: '#3B2A1E', deadline: '#D9B48A' };
-  const list = ev.length ? ev.map(e => `<div class="ev"><span class="bar4" style="background:${col[e.kind]}"></span><span class="sm mutd" style="width:64px;flex-shrink:0">${esc(e.time || 'moje')}</span><span class="grow">${esc(e.text)}</span>${e.id ? `<button class="xbtn" data-act="evDel" data-id="${e.id}" aria-label="Smazat">×</button>` : ''}</div>`).join('') : '<div class="note">Volno. Nic tu zatím není.</div>';
+  if (!U.evCat || !S.cats.some(c => c.id === U.evCat)) U.evCat = S.cats[0]?.id;
+  const list = ev.length ? ev.map(e => `<div class="ev"><span class="bar4" style="background:${e.color}"></span><span class="sm mutd" style="width:64px;flex-shrink:0">${esc(e.time || '')}</span><span class="grow">${esc(e.text)}</span>${e.id ? `<button class="xbtn" data-act="evDel" data-id="${e.id}" aria-label="Smazat">×</button>` : ''}</div>`).join('') : '<div class="note">Volno. Nic tu zatím není.</div>';
   return `
-  <div class="row"><a class="back" href="#/domu">‹ Domů</a><span class="sm mut">${(() => { const n = Object.entries(S.events).filter(([d, l]) => d.startsWith(U.calMonth) && l.some(e => e.kind === 'work')).length; return n ? `${n} směn v měsíci` : ''; })()}</span></div>
+  <div class="row"><a class="back" href="#/domu">‹ Domů</a><span class="sm mut">${(() => { const n = Object.entries(S.events).filter(([d, l]) => d.startsWith(U.calMonth) && l.some(e => e.cat === 'prace')).length; return n ? `práce: ${n} dní v měsíci` : ''; })()}</span></div>
   <div class="row"><h1 class="h1">${MON[m - 1]} <i>${y}</i></h1><div class="row gap6"><button class="hbtn" data-act="mon" data-n="-1" aria-label="Předchozí měsíc">‹</button><button class="hbtn" data-act="mon" data-n="1" aria-label="Další měsíc">›</button></div></div>
   <div class="cols"><div class="c1">
   <div class="card" style="padding:12px">
     <div class="calgrid xs mut" style="text-align:center">${DOW.map(d => `<span>${d}</span>`).join('')}</div>
     <div class="calgrid">${cells}</div>
-    <div class="chips xs mut" style="gap:14px"><span style="color:#E39A72">● směna</span><span style="color:#B7C27F">● škola</span><span style="color:#F1E6D6">● moje</span><span style="color:#D9B48A">● termín</span></div>
+    <div class="chips xs" style="gap:14px">${S.cats.map(c => `<span style="display:inline-flex;align-items:center;gap:6px;color:var(--ink)"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span>`).join('')}<button class="xbtn xs mut" style="font-size:12px;margin-left:auto" data-act="catsEdit">upravit barvy</button></div>
   </div>
   </div><div class="c2">
   <div class="card cream">
     <div class="ttl" style="font-size:24px">${DOWL[dow(U.sel)]} ${dayNum(U.sel)}. ${fromIso(U.sel).getMonth() + 1}.</div>
     ${list}
-    <button class="btn ${ev.some(e => e.kind === 'work') ? 'light' : 'moss'}" data-act="shiftToggle">${ev.some(e => e.kind === 'work') ? 'Odebrat směnu' : `+ Směna ${ROZVRH.smenaCas}`}</button>
     <div class="row gap8"><label for="evTime" class="sr">Čas</label><input id="evTime" class="inp" style="width:90px" placeholder="čas" inputmode="text"><label for="evText" class="sr">Co</label><input id="evText" class="inp" placeholder="Zapsat věc…" data-enter="addEv"></div>
+    <div class="chips">${S.cats.map(c => `<button class="chip ${U.evCat === c.id ? 'on' : ''}" data-act="evCat" data-id="${c.id}" style="display:inline-flex;align-items:center;gap:8px"><span class="dot" style="background:${c.color};box-shadow:0 0 0 2px #fff"></span>${esc(c.name)}</button>`).join('')}</div>
     <button class="btn" data-act="addEv">Přidat</button>
   </div>
   </div></div>`;
@@ -649,12 +650,18 @@ const SHEETS = {
     <button class="btn" data-act="entryEditSave" data-id="${pid}" data-i="${i}">Uložit změny</button>
     <button class="btn ghost" data-act="entryDel" data-id="${pid}" data-i="${i}">Smazat zápis</button>`;
   },
+  cats() {
+    return `<div class="row"><span class="md b">Kategorie a barvy</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
+    ${U.catDraft.map((c, i) => `<div class="env-row"><div class="row gap8"><label class="sr" for="catc${i}">Barva</label><input id="catc${i}" type="color" value="${esc(c.color)}" data-bind="catDraft.${i}.color" style="width:44px;height:44px;border:none;border-radius:12px;padding:0;background:none;flex-grow:0"><label class="sr" for="catn${i}">Název</label><input id="catn${i}" value="${esc(c.name)}" placeholder="Název" data-bind="catDraft.${i}.name"><button class="xbtn" style="color:var(--red)" data-act="catDel" data-i="${i}" aria-label="Smazat">×</button></div></div>`).join('')}
+    <button class="btn light" data-act="catAdd">+ Přidat kategorii</button>
+    <button class="btn" data-act="catSave">Uložit</button>`;
+  },
   settings() {
     return `<div class="row"><span class="md b">Nastavení</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
     <div class="note">Všechna data jsou zatím uložená jen v tomhle zařízení. Občas si stáhni zálohu.</div>
     <button class="btn" data-act="backup">Stáhnout zálohu (bez fotek)</button>
     <label class="btn light filebtn" style="display:flex;align-items:center;justify-content:center">Nahrát zálohu<input type="file" accept="application/json" data-file="restore"></label>
-    <div class="note">Rozvrh školy upravíš na začátku souboru app.js (ROZVRH). Směny si přidáváš sám v kalendáři.</div>`;
+    <div class="note">Kategorie a barvy kalendáře upravíš v Kalendáři → upravit barvy.</div>`;
   }
 };
 
@@ -697,21 +704,21 @@ const ACT = {
   close: closeSheet,
   settings: () => openSheet('settings'),
   /* domů */
-  addTodo: () => { const t = val('newTodo'); if (!t) return; (S.todos[today()] ||= []).push({ id: uid(), text: t, done: false }); save(); render(); $('#newTodo')?.focus(); },
-  todo: el => { const x = (S.todos[today()] || []).find(y => y.id === el.dataset.id); if (x) { x.done = !x.done; save(); render(); } },
-  todoDel: el => { S.todos[today()] = (S.todos[today()] || []).filter(y => y.id !== el.dataset.id); save(); render(); },
+  homeDay: el => { U.homeSel = el.dataset.d; render(); },
+  addTodo: () => { const t = val('newTodo'); if (!t) return; const d = U.homeSel || today(); (S.todos[d] ||= []).push({ id: uid(), text: t, done: false }); save(); render(); $('#newTodo')?.focus(); },
+  todo: el => { const d = U.homeSel || today(); const x = (S.todos[d] || []).find(y => y.id === el.dataset.id); if (x) { x.done = !x.done; save(); render(); } },
+  todoDel: el => { const d = U.homeSel || today(); S.todos[d] = (S.todos[d] || []).filter(y => y.id !== el.dataset.id); save(); render(); },
   gym: () => { const t = today(); S.gym = S.gym.includes(t) ? S.gym.filter(d => d !== t) : [...S.gym, t]; save(); render(); },
   food: () => { const t = today(); S.food = S.food.includes(t) ? S.food.filter(d => d !== t) : [...S.food, t]; save(); render(); },
   /* kalendář */
   pickDay: el => { U.sel = el.dataset.d; render(); },
   mon: el => { const [y, m] = U.calMonth.split('-').map(Number); const d = new Date(y, m - 1 + +el.dataset.n, 1); U.calMonth = iso(d).slice(0, 7); U.sel = iso(d); render(); },
-  addEv: () => { const t = val('evText'); if (!t) return; (S.events[U.sel] ||= []).push({ id: uid(), time: val('evTime'), text: t }); save(); render(); },
-  shiftToggle: () => {
-    const l = S.events[U.sel] ||= [];
-    if (l.some(e => e.kind === 'work')) S.events[U.sel] = l.filter(e => e.kind !== 'work');
-    else l.unshift({ id: uid(), kind: 'work', time: val('evTime') || ROZVRH.smenaCas, text: 'Směna – rozvoz' });
-    save(); render();
-  },
+  addEv: () => { const t = val('evText'); if (!t) return; (S.events[U.sel] ||= []).push({ id: uid(), time: val('evTime'), text: t, cat: U.evCat || S.cats[0]?.id }); save(); render(); },
+  evCat: el => { U.evCat = el.dataset.id; const t = val('evText'), tm = val('evTime'); render(); $('#evText').value = t; $('#evTime').value = tm; },
+  catsEdit: () => { U.catDraft = S.cats.map(c => ({ ...c })); openSheet('cats'); },
+  catAdd: () => { U.catDraft.push({ id: uid(), name: '', color: '#7FB3FF' }); drawSheet(); },
+  catDel: el => { const c = U.catDraft[+el.dataset.i]; const used = Object.values(S.events).some(l => l.some(e => e.cat === c.id)); if (used && !confirm('Tuhle barvu používají některé události. Ty pak dostanou první barvu v seznamu. Smazat?')) return; U.catDraft.splice(+el.dataset.i, 1); drawSheet(); },
+  catSave: () => { if (!U.catDraft.length) return toast('Nech si aspoň jednu kategorii'); if (U.catDraft.some(c => !String(c.name).trim())) return toast('Každá kategorie potřebuje název'); S.cats = U.catDraft.map(c => ({ ...c, name: String(c.name).trim() })); const ids = S.cats.map(c => c.id); Object.values(S.events).forEach(l => l.forEach(e => { if (!ids.includes(e.cat)) e.cat = ids[0]; })); save(); closeSheet(); render(); },
   evDel: el => { S.events[U.sel] = (S.events[U.sel] || []).filter(e => e.id !== el.dataset.id); save(); render(); },
   /* peníze */
   moneyTab: el => { U.moneyTab = +el.dataset.i; render(); },
