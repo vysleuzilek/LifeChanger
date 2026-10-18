@@ -499,12 +499,12 @@ function vPlant(id) {
   const D = U.pdraft;
   const careN = p.interval > 0 ? (p.lastCare ? p.interval - daysBetween(p.lastCare, today()) : 0) : null;
   const care = p.interval > 0 ? `<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between"><div class="col"><span class="sm mut">Další péče (${careWord(p)})</span><span class="md b" style="color:${careN <= 0 ? 'var(--terra)' : 'var(--ink)'}">${careN <= 0 ? 'dnes' : `za ${careN} dní`}</span></div><button class="btn moss" style="width:auto;min-height:44px" data-act="careDone" data-id="${p.id}">✓ Hotovo</button></div>` : '';
-  const ents = (p.entries || []).map((e, i) => `<button class="entry" data-act="entryOpen" data-id="${p.id}" data-i="${i}">${e.photo ? `<img data-img="${e.photo}" alt="Fotka ${esc(p.name)}">` : ''}<span class="tx"><span class="sm b" style="color:var(--moss)">${shortD(e.date)}${e.date === today() ? ' · dnes' : ''}</span>${e.text ? `<span class="md" style="line-height:1.4">${esc(e.text)}</span>` : ''}</span></button>`).join('');
+  const ents = (p.entries || []).map((e, i) => `<button class="entry" data-act="entryOpen" data-id="${p.id}" data-i="${i}">${e.photo ? `<img data-img="${e.photo}" alt="Fotka ${esc(p.name)}" data-act="viewImg" data-id="${e.photo}" style="cursor:zoom-in">` : ''}<span class="tx"><span class="sm b" style="color:var(--moss)">${shortD(e.date)}${e.date === today() ? ' · dnes' : ''}</span>${e.text ? `<span class="md" style="line-height:1.4">${esc(e.text)}</span>` : ''}</span></button>`).join('');
   const photos = (p.entries || []).filter(e => e.photo).length;
   return `
   <div class="row"><a class="back" href="#/rostliny">‹ Rostliny</a><button class="hbtn" data-act="plantEdit" data-id="${p.id}">upravit</button></div>
   <div class="cols"><div class="c1">
-  <label class="cover filebtn" aria-label="Fotka rostliny">${p.cover ? `<img data-img="${p.cover}" alt="${esc(p.name)}"><span class="cover-btn">změnit fotku</span>` : `${svg('cam', 30)}<span class="sm b">+ Přidat fotku rostliny</span>`}<input type="file" accept="image/*" data-file="plantCover" data-id="${p.id}"></label>
+  ${p.cover ? `<div class="cover"><img data-img="${p.cover}" alt="${esc(p.name)}" data-act="viewImg" data-id="${p.cover}" style="cursor:zoom-in"><label class="cover-btn filebtn">změnit fotku<input type="file" accept="image/*" data-file="plantCover" data-id="${p.id}"></label></div>` : `<label class="cover filebtn" aria-label="Přidat fotku rostliny">${svg('cam', 30)}<span class="sm b">+ Přidat fotku rostliny</span><input type="file" accept="image/*" data-file="plantCover" data-id="${p.id}"></label>`}
   <div class="col gap4"><h1 class="h1" style="font-size:38px">${esc(p.name)}</h1><span class="md mut">${esc(p.sub)}</span></div>
   <div class="minis"><div class="mini"><span>Kořeny</span><b>${esc(p.roots === '' ? '—' : p.roots)}</b></div><div class="mini"><span>Nové listy</span><b style="color:var(--moss)">${esc(p.leaves === '' ? '—' : p.leaves)}</b></div><div class="mini"><span>Kde je</span><b>${esc(p.where || '—')}</b></div></div>
   ${care}
@@ -825,6 +825,7 @@ const ACT = {
     if (D.url) URL.revokeObjectURL(D.url);
     U.pdraft = { id: p.id, text: '', file: null, url: '' }; save(); render(); toast('Uloženo do deníku');
   },
+  viewImg: async (el, e) => { e?.stopPropagation(); const u = await fileUrl(el.dataset.id); if (!u) return; const v = document.createElement('div'); v.className = 'viewer'; v.setAttribute('role', 'dialog'); v.setAttribute('aria-label', 'Fotka'); v.innerHTML = `<img src="${u}" alt=""><button class="viewer-x" aria-label="Zavřít">×</button>`; v.addEventListener('click', () => v.remove()); document.body.appendChild(v); },
   entryOpen: el => { U.entryFile = null; U.entryUrl = ''; U.entryNoPhoto = false; openSheet('entry', [el.dataset.id, +el.dataset.i]); },
   entryNoPhoto: () => { U.entryFile = null; U.entryUrl = ''; U.entryNoPhoto = true; drawSheet(); },
   entryEditSave: async el => {
