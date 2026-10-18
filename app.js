@@ -168,6 +168,7 @@ function foodStreak() {
   return n;
 }
 function latestPhoto(p) { const e = (p.entries || []).find(x => x.photo); return e ? e.photo : null; }
+function plantPhoto(p) { return p.cover || latestPhoto(p); }
 
 /* ---------- Navigace ---------- */
 const NAV = [['domu', 'Domů', 'home'], ['penize', 'Peníze', 'money'], ['shopy', 'Shopy', 'shop'], ['skola', 'Škola', 'school'], ['rostliny', 'Rostliny', 'leaf']];
@@ -208,13 +209,13 @@ function closeSheet() { U.sheetFn = null; drawSheet(); }
 function vHome() {
   const t = today(), ws = weekStart(t);
   const week = [...Array(7)].map((_, i) => addDays(ws, i)).map(s => {
-    const ev = dayEvents(s); const k = ev.find(e => e.kind === 'work') ? 'work' : ev.find(e => e.kind === 'school') ? 'school' : 'free';
-    const mine = (S.events[s] || []).length || S.school.deadlines.some(d => d.date === s);
-    return `<div class="wd ${s === t ? 'today' : ''}"><span>${DOW[dow(s)]}</span>${s === t ? '<span style="font-size:10px">dnes</span>' : `<span class="dot ${k}"></span>`}</div>`;
+    const ev = dayEvents(s), has = k => ev.some(e => e.kind === k);
+    const dots = [['work', '#E39A72'], ['school', '#B7C27F'], ['mine', s === t ? '#2C2118' : '#F1E6D6'], ['deadline', '#D9B48A']].filter(([k]) => has(k)).map(([, c]) => `<span style="background:${c}"></span>`).join('');
+    return `<div class="wd ${s === t ? 'today' : ''}"><span>${DOW[dow(s)]}</span><b class="wdn">${dayNum(s)}</b><span class="dots">${dots || (s === t ? '' : '<span style="border:1px solid #7E6C5A;box-sizing:border-box"></span>')}</span></div>`;
   }).join('');
   const due = S.plants.filter(plantDue).length;
-  const tiles = S.plants.map(p => { const ph = latestPhoto(p); const w = p.where === 'voda' && !p.roots && !p.leaves;
-    return `<a class="ptile ${w ? 'wait' : ''}" href="#/rostlina/${p.id}">${ph ? `<img data-img="${ph}" alt="">` : svg(w ? 'stem' : 'sprout', 34, 1.6, w ? '#8A6F5A' : '#4F5A2A')}<span class="sm b">${esc(p.name)}</span><span class="xs ${w ? 'mutd' : 'ok'}">${esc(plantShort(p))}</span></a>`; }).join('');
+  const tiles = S.plants.map(p => { const ph = plantPhoto(p); const w = p.where === 'voda' && !p.roots && !p.leaves;
+    return `<a class="ptile ${w ? 'wait' : ''} ${ph ? 'has' : ''}" href="#/rostlina/${p.id}">${ph ? `<img data-img="${ph}" alt="${esc(p.name)}">` : svg(w ? 'stem' : 'sprout', 34, 1.6, w ? '#8A6F5A' : '#4F5A2A')}<span class="sm b">${esc(p.name)}</span><span class="xs ${w ? 'mutd' : 'ok'}">${esc(plantShort(p))}</span></a>`; }).join('');
   const todos = S.todos[t] || [];
   const tdHtml = todos.length ? todos.map(x => `<div class="todo"><button class="tbtn" data-act="todo" data-id="${x.id}"><span class="cbox ${x.done ? 'on' : ''}">${x.done ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2C2118" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>' : ''}</span><span class="${x.done ? 'done-t' : ''}">${esc(x.text)}</span></button><button class="xbtn" data-act="todoDel" data-id="${x.id}" aria-label="Smazat úkol">×</button></div>`).join('') : '<div class="empty">Na dnešek nic. Přidej si úkol.</div>';
   const done = todos.filter(x => x.done).length;
@@ -230,7 +231,7 @@ function vHome() {
     <div class="hs">${tiles}<a class="ptile add" href="#/rostliny" data-act="addPlant">${svg('plus', 26)}<span class="sm b">Přidat rostlinu</span></a></div>
   </div>
   <div class="row gap12 homebottom" style="align-items:stretch">
-    <a href="#/penize" class="card terra" style="flex:1;gap:2px;text-decoration:none"><span class="sm b">Peníze</span><span class="mid" style="font-size:30px">${kc(totalMoney())} Kč</span><span class="xs b" style="padding-top:8px">aktuální stav</span><span class="xs" style="color:#5A3A26">napočítáno ze sekce Peníze</span></a>
+    <a href="#/penize" class="card terra" style="flex:1;gap:2px;text-decoration:none"><span class="md b">Peníze</span><span class="serif" style="font-size:46px;line-height:1.05;padding-top:6px">${kc(totalMoney())} Kč</span></a>
     <div class="card cream" style="flex:1;gap:4px">
       <span class="sm b mutd">Gym tento týden</span><span class="mid" style="font-size:30px">${gymW} / 3</span>
       <div style="display:flex;gap:6px;padding-top:4px">${gd}</div>
@@ -241,6 +242,7 @@ function vHome() {
   </div><div class="c2">
   <div class="card">
     <div class="row base"><div class="ttl" style="font-size:24px">Dnes</div><span class="sm mut">${done} / ${todos.length} hotovo</span></div>
+    ${(() => { const ev = dayEvents(t); const col = { work: '#E39A72', school: '#B7C27F', mine: '#F1E6D6', deadline: '#D9B48A' }; return ev.length ? `<a href="#/kalendar" class="col" style="text-decoration:none;gap:2px;padding-bottom:6px;border-bottom:1px solid var(--card2)">${ev.map(e => `<div class="ev"><span class="bar4" style="background:${col[e.kind]}"></span><span class="sm mut" style="width:56px;flex-shrink:0">${esc(e.time || '')}</span><span class="grow">${esc(e.text)}</span></div>`).join('')}</a>` : ''; })()}
     ${tdHtml}
     <div class="addrow"><label for="newTodo" class="sr">Nový úkol</label><input id="newTodo" placeholder="Přidat úkol…" enterkeyhint="done" data-enter="addTodo"><button data-act="addTodo">Přidat</button></div>
   </div>
@@ -395,7 +397,7 @@ function vShops() {
     const D = U.day, y = addDays(today(), -1);
     const dchips = [[y, `Včera ${dayNum(y)}. ${fromIso(y).getMonth() + 1}.`], [today(), 'Dnes']].map(([d, l]) => `<button class="chip ${D.date === d && !D.other ? 'on' : ''}" style="min-height:34px;font-size:12px" data-act="dayDate" data-d="${d}">${l}</button>`).join('') + `<button class="chip ${D.other ? 'on' : ''}" style="min-height:34px;font-size:12px" data-act="dayOther">Jiný…</button>`;
     const fbox = (k, l, ic, c) => `<div class="fbox"><span class="ico" style="background:${c}">${svg(ic, 18, 2)}</span><label for="d_${k}">${l}</label><input id="d_${k}" inputmode="decimal" placeholder="0" value="${esc(D[k])}" data-bind="day.${k}" data-live="dayPrev"></div>`;
-    const rowsT = days.map(d => { const p = num(d.rev) - num(d.ads) - num(d.ful); return `<button class="trow" data-act="dayOpen" data-d="${d.date}"><span class="b">${DOW[dow(d.date)]} ${dayNum(d.date)}.</span><span>${kc(d.ads)}</span><span>${kc(d.rev)}</span><span>${kc(d.ful)}</span><span class="b ${p >= 0 ? 'ok' : 'bad'}">${sgn(p)}</span></button>`; }).join('');
+    const rowsT = days.map(d => { const p = num(d.rev) - num(d.ads) - num(d.ful); return `<button class="trow" data-act="dayOpen" data-d="${d.date}"><span class="b">${shortD(d.date)}</span><span>${kc(d.ads)}</span><span>${kc(d.rev)}</span><span>${kc(d.ful)}</span><span class="b ${p >= 0 ? 'ok' : 'bad'}">${sgn(p)}</span></button>`; }).join('');
     body = `<div class="card" style="padding:12px">
       <div class="chips"><span class="xs b mut">Za den:</span>${dchips}</div>
       ${D.other ? `<label for="dayDateInp" class="sr">Datum</label><input id="dayDateInp" type="date" class="inp" value="${D.date}" data-bind="day.date" style="background:var(--cream)">` : ''}
@@ -479,7 +481,7 @@ function vPlants() {
   const groups = {}; due.forEach(p => { (groups[careWord(p)] ||= []).push(p.name); });
   const hero = due.length ? Object.entries(groups).map(([w, n]) => `${w[0].toUpperCase() + w.slice(1)}: ${n.join(', ')}`).join('<br>') : 'Dnes nic.<br>Všechno v pohodě.';
   const cards = S.plants.map(p => {
-    const ph = latestPhoto(p), last = p.entries?.[0];
+    const ph = plantPhoto(p), last = p.entries?.[0];
     const w = p.where === 'voda' && !p.roots && !p.leaves;
     return `<a class="pcard" href="#/rostlina/${p.id}"><div class="ph ${w ? 'wait' : ''}">${ph ? `<img data-img="${ph}" alt="">` : svg(w ? 'stem' : 'sprout', 44, 1.5, w ? '#8A6F5A' : '#4F5A2A')}</div><span class="md b" style="font-size:15px">${esc(p.name)}</span><span class="sm mutd">${esc([p.where, p.roots ? p.roots + ' kořeny' : '', p.leaves ? p.leaves + ' nové listy' : ''].filter(Boolean).join(' · '))}</span><span class="xs b ${plantDue(p) ? 'bad' : 'ok'}">${plantDue(p) ? careWord(p) + ' dnes' : last ? 'poslední zápis: ' + relDay(last.date) : 'zatím bez zápisu'}</span></a>`;
   }).join('');
@@ -501,6 +503,7 @@ function vPlant(id) {
   return `
   <div class="row"><a class="back" href="#/rostliny">‹ Rostliny</a><button class="hbtn" data-act="plantEdit" data-id="${p.id}">upravit</button></div>
   <div class="cols"><div class="c1">
+  <label class="cover filebtn" aria-label="Fotka rostliny">${p.cover ? `<img data-img="${p.cover}" alt="${esc(p.name)}"><span class="cover-btn">změnit fotku</span>` : `${svg('cam', 30)}<span class="sm b">+ Přidat fotku rostliny</span>`}<input type="file" accept="image/*" data-file="plantCover" data-id="${p.id}"></label>
   <div class="col gap4"><h1 class="h1" style="font-size:38px">${esc(p.name)}</h1><span class="md mut">${esc(p.sub)}</span></div>
   <div class="minis"><div class="mini"><span>Kořeny</span><b>${esc(p.roots === '' ? '—' : p.roots)}</b></div><div class="mini"><span>Nové listy</span><b style="color:var(--moss)">${esc(p.leaves === '' ? '—' : p.leaves)}</b></div><div class="mini"><span>Kde je</span><b>${esc(p.where || '—')}</b></div></div>
   ${care}
@@ -639,8 +642,11 @@ const SHEETS = {
   entry(arg) {
     const [pid, i] = arg; const p = S.plants.find(x => x.id === pid); const e = p?.entries[i]; if (!e) return '';
     return `<div class="row"><span class="md b">${shortD(e.date)}</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
-    ${e.photo ? `<img data-img="${e.photo}" alt="" style="width:100%;border-radius:18px">` : ''}
-    <div class="md">${esc(e.text)}</div>
+    ${U.entryUrl ? `<img src="${U.entryUrl}" alt="" style="width:100%;border-radius:18px">` : e.photo && !U.entryNoPhoto ? `<img data-img="${e.photo}" alt="" style="width:100%;border-radius:18px">` : ''}
+    <div class="row gap8"><label class="btn light filebtn" style="flex:1;display:flex;align-items:center;justify-content:center">${e.photo || U.entryUrl ? 'Změnit fotku' : '+ Přidat fotku'}<input type="file" accept="image/*" data-file="entryPhoto"></label>${(e.photo && !U.entryNoPhoto) || U.entryUrl ? '<button class="btn light" style="flex:1" data-act="entryNoPhoto">Odebrat fotku</button>' : ''}</div>
+    <label class="lbl" for="enDate">Datum</label><input id="enDate" type="date" class="inp" value="${e.date}">
+    <label class="lbl" for="enText">Text</label><textarea id="enText" class="inp">${esc(e.text)}</textarea>
+    <button class="btn" data-act="entryEditSave" data-id="${pid}" data-i="${i}">Uložit změny</button>
     <button class="btn ghost" data-act="entryDel" data-id="${pid}" data-i="${i}">Smazat zápis</button>`;
   },
   settings() {
@@ -802,7 +808,7 @@ const ACT = {
     if (id) Object.assign(S.plants.find(p => p.id === id), data); else S.plants.push({ id: uid(), lastCare: null, entries: [], ...data });
     save(); closeSheet(); render();
   },
-  plantDel: async el => { if (!confirm('Smazat rostlinu i s deníkem?')) return; const p = S.plants.find(x => x.id === el.dataset.id); for (const e of p.entries) if (e.photo) await IDB.del(e.photo); S.plants = S.plants.filter(x => x.id !== el.dataset.id); save(); closeSheet(); go('rostliny'); },
+  plantDel: async el => { if (!confirm('Smazat rostlinu i s deníkem?')) return; const p = S.plants.find(x => x.id === el.dataset.id); for (const e of p.entries) if (e.photo) await IDB.del(e.photo); if (p.cover) await IDB.del(p.cover); S.plants = S.plants.filter(x => x.id !== el.dataset.id); save(); closeSheet(); go('rostliny'); },
   careDone: el => { const p = S.plants.find(x => x.id === el.dataset.id); p.lastCare = today(); p.entries.unshift({ date: today(), text: p.where === 'voda' ? 'Vyměněna voda' : 'Zalito', photo: null }); save(); render(); toast('Hotovo ✓'); },
   entrySave: async el => {
     const p = S.plants.find(x => x.id === el.dataset.id), D = U.pdraft; const t = String(D.text).trim();
@@ -812,12 +818,24 @@ const ACT = {
     if (D.url) URL.revokeObjectURL(D.url);
     U.pdraft = { id: p.id, text: '', file: null, url: '' }; save(); render(); toast('Uloženo do deníku');
   },
-  entryOpen: el => openSheet('entry', [el.dataset.id, +el.dataset.i]),
+  entryOpen: el => { U.entryFile = null; U.entryUrl = ''; U.entryNoPhoto = false; openSheet('entry', [el.dataset.id, +el.dataset.i]); },
+  entryNoPhoto: () => { U.entryFile = null; U.entryUrl = ''; U.entryNoPhoto = true; drawSheet(); },
+  entryEditSave: async el => {
+    const p = S.plants.find(x => x.id === el.dataset.id), e = p.entries[+el.dataset.i];
+    e.text = val('enText'); e.date = val('enDate') || e.date;
+    if (U.entryFile) { const id = await storeFile(U.entryFile); if (e.photo) await IDB.del(e.photo); e.photo = id; }
+    else if (U.entryNoPhoto && e.photo) { await IDB.del(e.photo); e.photo = null; }
+    p.entries.sort((a, b) => b.date.localeCompare(a.date));
+    U.entryFile = null; U.entryUrl = ''; U.entryNoPhoto = false;
+    save(); closeSheet(); render(); toast('Zápis upraven');
+  },
   entryDel: async el => { const p = S.plants.find(x => x.id === el.dataset.id); const [e] = p.entries.splice(+el.dataset.i, 1); if (e?.photo) await IDB.del(e.photo); save(); closeSheet(); render(); },
   /* záloha */
   backup: () => { const b = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `lifechanger-zaloha-${today()}.json`; a.click(); }
 };
 const FILE = {
+  entryPhoto: el => { const f = el.files[0]; if (!f) return; U.entryFile = f; U.entryUrl = URL.createObjectURL(f); U.entryNoPhoto = false; drawSheet(); },
+  plantCover: async el => { const f = el.files[0]; if (!f) return; const p = S.plants.find(x => x.id === el.dataset.id); try { const id = await storeFile(f); if (p.cover) await IDB.del(p.cover); p.cover = id; save(); render(); toast('Fotka uložena'); } catch (e) { toast('Fotku se nepodařilo uložit'); } },
   plantPhoto: el => { const f = el.files[0]; if (!f) return; if (U.pdraft.url) URL.revokeObjectURL(U.pdraft.url); U.pdraft.file = f; U.pdraft.url = URL.createObjectURL(f); render(); },
   txFile: el => { U.draft.file = el.files[0] || null; drawSheet(); txPreview(); },
   shareFile: el => { U.draft.file = el.files[0] || null; drawSheet(); },
