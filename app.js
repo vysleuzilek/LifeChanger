@@ -100,8 +100,8 @@ function migrate() {
   if (!S.activeShop || !S.shops.some(x => x.id === S.activeShop)) S.activeShop = S.shops[0]?.id || null;
   if (!S.cats || !S.cats.length) S.cats = DEFAULT_CATS.map(c => ({ ...c }));
   Object.values(S.events).forEach(l => l.forEach(e => { if (!e.cat) e.cat = e.kind === 'work' ? 'prace' : 'udalosti'; delete e.kind; }));
+  return typeof seedPlants === 'function' ? seedPlants() : false;
 }
-migrate();
 function save() {
   const json = JSON.stringify(S);
   try { localStorage.setItem(KEY, json); } catch (e) { toast('Úložiště je plné'); }
@@ -126,7 +126,7 @@ function cloudInit() {
 function localHasData() { return S.tx.length || Object.keys(S.events).length || Object.keys(S.todos).length || S.shops.some(x => x.days.length) || S.plants.some(p => p.entries.length || p.cover) || S.school.share.length; }
 async function pushNow() { if (!CLOUD.user) return; const json = JSON.stringify(S); CLOUD.lastJson = json; await mainRef().set({ json, updated: firebase.firestore.FieldValue.serverTimestamp() }); }
 function applyRemote(json) {
-  try { S = Object.assign(defaults(), JSON.parse(json)); migrate(); CLOUD.lastJson = json; localStorage.setItem(KEY, json); render(); } catch (e) { console.warn(e); }
+  try { S = Object.assign(defaults(), JSON.parse(json)); const ch = migrate(); CLOUD.lastJson = json; localStorage.setItem(KEY, json); render(); if (ch) save(); } catch (e) { console.warn(e); }
 }
 async function cloudStart() {
   setSync('připojuji…');
@@ -229,8 +229,162 @@ function nextSchool() {
   for (let i = 0; i < 30; i++) { const s = addDays(today(), i); const e = (S.events[s] || []).filter(x => x.cat === 'skola').sort((a, b) => (a.time || '').localeCompare(b.time || ''))[0]; if (e) return `${i === 0 ? 'dnes' : i === 1 ? 'zítra' : shortD(s)}${e.time ? ' ' + e.time : ''}`; }
   return '—';
 }
-function plantDue(p) { return p.interval > 0 && (!p.lastCare || daysBetween(p.lastCare, today()) >= p.interval); }
-const careWord = p => (p.careName || '').trim() || (p.where === 'voda' ? 'vyměnit vodu' : 'zalít');
+/* ---------- Rostliny: druhy, rady, historie ---------- */
+const SPECIES = {
+  deliciosa: {
+    name: 'Monstera deliciosa', cz: 'monstera skvostná', match: /deliciosa|skvostn/,
+    tips: [
+      ['☀️ Světlo', 'Hodně světla, ale ne ostré polední slunce. Kousek od okna je ideál. Při malém světle dělá listy bez děr.'],
+      ['💧 Zalévání', 'Zalít, když proschnou vrchní 3–4 cm hlíny (prst). Pak pořádně, ať voda vyteče dírou. Voda v podmisce nesmí zůstat.'],
+      ['💨 Vlhkost', 'Ideálně 50–60 %. Nedávat listy nad radiátor – okraje hnědnou.'],
+      ['🌱 Hnojení', 'Poloviční dávka: v zimě 1× za 4 týdny, březen–září 1× za 2 týdny.'],
+      ['🪴 Přesazení', 'Na jaře, když lezou kořeny dírami. O 3–5 cm větší květináč, vzdušná směs (kůra + perlit + hlína).'],
+      ['🧗 Opora', 'Mechová tyč místo tenké hůlky = větší listy s víc dírami.'],
+      ['🧽 Údržba', 'Jednou za měsíc otřít listy vlhkým hadříkem. Žluté staré listy ustřihnout u stonku.'],
+      ['⚠️ Problémy', 'Žluté listy + mokrá hlína = přelité. Hnědé suché okraje = sucho/topení. Listy bez děr = málo světla.']
+    ],
+    history: 'Pochází z deštných pralesů jižního Mexika a Střední Ameriky, kde šplhá po stromech až 20 m vysoko. Díry v listech („fenestrace“) pomáhají listům odolat větru a propouštět světlo k nižším listům. Jméno „deliciosa“ znamená „lahodná“ – v přírodě dělá jedlé plody, které chutnají jako mix ananasu a banánu. Do Evropy se dostala v 19. století a od 70. let je jednou z nejslavnějších pokojovek.'
+  },
+  adansonii: {
+    name: 'Monstera adansonii', cz: 'opičí monstera', match: /adansoni|opic/,
+    tips: [
+      ['☀️ Světlo', 'Světlé místo bez přímého ostrého slunce. Při málo světla se natahuje a dělá malé listy.'],
+      ['💧 Zalévání', 'Zalít, když proschnou vrchní 2 cm. Řízky po přesazení z vody první 2 týdny držet lehce vlhké, pak normálně (asi co 5–7 dní).'],
+      ['💨 Vlhkost', 'Má ráda vlhčí vzduch. Podnos s kamínky a vodou nebo skupina rostlin pomáhá.'],
+      ['🌱 Hnojení', 'Poloviční dávka, v zimě 1× za 4 týdny, v létě 1× za 2 týdny. Čerstvě přesazené až po měsíci.'],
+      ['🧗 Růst', 'Je to popínavka – může viset z poličky nebo šplhat po tyčce. Řízek = kus stonku s uzlem, koření snadno ve vodě.'],
+      ['⚠️ Problémy', 'Hnědé křupavé listy + mokrá hlína = hniloba kořenů. Žluté listy = přelití. Bílé chomáčky = červec.']
+    ],
+    history: 'Roste ve Střední a Jižní Americe, kde šplhá po kmenech stromů. Pojmenovaná po francouzském botanikovi Michelu Adansonovi z 18. století. Anglicky se jí říká „Swiss cheese vine“ – švýcarský sýr – kvůli dírám, které má v listech od úplně malička. V posledních letech je to jedna z nejoblíbenějších pokojovek na Instagramu.'
+  },
+  pachira: {
+    name: 'Pachira aquatica', cz: 'penízovník, money tree', match: /pachira|money|penizovn/,
+    tips: [
+      ['☀️ Světlo', 'Hodně světla, snese i ranní přímé slunce. Ve tmě shazuje listy.'],
+      ['💧 Zalévání', 'Zalít, když proschne vrchní polovina hlíny. Snese sucho líp než přelití – kmen si drží vodu.'],
+      ['🌱 Hnojení', 'Poloviční dávka, v zimě 1× za 4 týdny, v létě 1× za 2 týdny.'],
+      ['🪢 Splétání', 'Spletené kmeny = 3–5 rostlin zasazených k sobě a splétaných, dokud jsou mladé a ohebné. Z řízku tlustý kmen nevyroste.'],
+      ['✂️ Řízky', 'Na jaře uříznout zelený výhonek 10–15 cm, do vody, kořeny za 3–6 týdnů.'],
+      ['⚠️ Problémy', 'Měkký kmen = hniloba z přelití. Žluté listy = moc vody nebo málo světla.']
+    ],
+    history: 'Pochází z bažin Střední a Jižní Ameriky – odtud „aquatica“. Ve volné přírodě je to strom až 18 m vysoký s jedlými oříšky. Jméno „money tree“ vzniklo na Tchaj-wanu v 80. letech, kde ho řidič kamionu poprvé spletl z pěti stromků – podle feng shui nosí štěstí a peníze. Dnes se tak prodává po celém světě, i v IKEA.'
+  },
+  ficus: {
+    name: 'Ficus elastica', cz: 'fíkus pryžodárný, gumovník', match: /ficus|fikus|gumovn|elastica/,
+    tips: [
+      ['☀️ Světlo', 'Světlé místo, klidně trochu slunce. Při málo světla ztrácí lesk a spodní listy.'],
+      ['💧 Zalévání', 'Zalít, když proschnou vrchní 3–4 cm. V zimě méně.'],
+      ['🚫 Stěhování', 'Nesnáší změny místa a průvan – hned shazuje listy. Najdi mu jedno místo a nech ho tam.'],
+      ['🧽 Lesk', 'Velké listy chytají prach. 1× měsíčně otřít vlhkým hadříkem.'],
+      ['🪴 Přesazení', 'Když z hlíny koukají kořeny, na jaře o 3–4 cm větší květináč.'],
+      ['🌱 Hnojení', 'Poloviční dávka, v zimě 1× za 4 týdny, v létě 1× za 2 týdny.'],
+      ['⚠️ Pozor', 'Bílá míza z řezu dráždí kůži – po stříhání si umyj ruce. Pro kočky a psy je jedovatý.']
+    ],
+    history: 'Pochází z jihovýchodní Asie a severovýchodní Indie, kde roste jako obří strom až 30–40 m. Z jeho bílé mízy se kdysi vyráběl kaučuk (guma) – odtud jméno „elastica“ a „gumovník“. Než se prosadil kaučukovník brazilský, byla to hlavní surovina na gumu. V Indii se z jeho vzdušných kořenů splétají živé mosty přes řeky.'
+  },
+  ctenanthe: {
+    name: 'Ctenanthe oppenheimiana', cz: 'ktenanta', match: /ctenanth|ktenant|calathea|kalate/,
+    tips: [
+      ['💧 Voda', 'Nesnáší tvrdou vodu z kohoutku (hnědé okraje). Zalévat odstátou (aspoň den), ideálně dešťovou nebo filtrovanou.'],
+      ['💧 Zalévání', 'Hlína pořád lehce vlhká jako vyždímaná houba – nikdy úplně suchá, ale ani mokrá.'],
+      ['💨 Vlhkost', 'Chce nejvíc vlhkosti ze všech: podnos s kamínky a vodou, skupina rostlin, občas orosit.'],
+      ['☀️ Světlo', 'Světlo, ale žádné přímé slunce – listy bledne a pálí se. Daleko od topení.'],
+      ['✂️ Údržba', 'Žluté a hnědé listy ustřihnout úplně dole u hlíny.'],
+      ['🌱 Hnojení', 'Jen slabě: čtvrtinová dávka 1× za 4 týdny. Je citlivá.']
+    ],
+    history: 'Pochází z deštných pralesů Brazílie, kde roste ve stínu pod stromy. Patří do čeledi marantovitých – „modlících se rostlin“, které večer zvedají a zavírají listy a ráno je zase otevírají. Proto se v noci můžou listy ozývat jemným šustěním.'
+  },
+  dracaena: {
+    name: 'Dracaena marginata', cz: 'dračinec', match: /dracaen|dracin|marginata/,
+    tips: [
+      ['☀️ Světlo', 'Hodně světla. Venku v létě (na polostínu) krásně ožívá.'],
+      ['💧 Zalévání', 'Suchomilka: zalít, až proschne půlka hlíny. V zimě klidně jen každé 2 týdny. Přelití ji zabije.'],
+      ['💧 Voda', 'Citlivá na tvrdou vodu a fluor – zalévat odstátou vodou.'],
+      ['🔥 Topení', 'Ne přímo u radiátoru – suchý vzduch = hnědé konečky listů.'],
+      ['✂️ Údržba', 'Hnědé konečky zastřihnout do špičky. Spodní suché listy u kmene odtrhnout.'],
+      ['🌱 Hnojení', 'Poloviční dávka, v zimě 1× za 4 týdny, v létě 1× za 2 týdny.']
+    ],
+    history: 'Pochází z Madagaskaru. Jméno „dračinec“ má rod podle dračí krve – některé příbuzné druhy roní červenou pryskyřici, které se ve starověku říkalo dračí krev a používala se jako barvivo a lék. „Marginata“ znamená „lemovaná“ – podle červených okrajů listů. NASA ji zařadila mezi rostliny, které čistí vzduch v místnosti.'
+  },
+  schefflera: {
+    name: 'Schefflera arboricola', cz: 'šeflera', match: /scheffler|sefler/,
+    tips: [
+      ['☀️ Světlo', 'Světlé místo, snese i trochu slunce.'],
+      ['💧 Zalévání', 'Zalít, když proschnou vrchní 2–3 cm. Nemá ráda mokro.'],
+      ['✂️ Tvar', 'Snese stříhání – zkrácením vršku se víc rozvětví.'],
+      ['🌱 Hnojení', 'Poloviční dávka, v zimě 1× za 4 týdny, v létě 1× za 2 týdny.']
+    ],
+    history: 'Pochází z Tchaj-wanu a jižní Číny. Listy rozložené jako prsty ruky jí daly anglické jméno „umbrella tree“ – deštníkový strom. Pojmenovaná po německém botanikovi J. C. Schefflerovi.'
+  },
+  other: { name: '', cz: '', match: /$^/, tips: [['💧 Zalévání', 'Zalít, když proschne vrchní část hlíny. Radši méně než moc.'], ['☀️ Světlo', 'Většina pokojovek chce světlo, ale ne ostré polední slunce.'], ['🌱 Hnojení', 'Poloviční dávka, v zimě 1× za 4 týdny, v létě 1× za 2 týdny.']], history: '' }
+};
+const SP_ORDER = ['adansonii', 'deliciosa', 'pachira', 'ficus', 'ctenanthe', 'dracaena', 'schefflera'];
+const normTxt = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+function guessSp(p) {
+  const s = normTxt(p.sub + ' ' + p.name);
+  for (const k of SP_ORDER) if (SPECIES[k].match.test(s)) return k;
+  if (/monster/.test(s)) return 'deliciosa';
+  return 'other';
+}
+const plantSp = p => SPECIES[p.sp] ? p.sp : guessSp(p);
+const spName = p => SPECIES[plantSp(p)].name || (p.sub || '').split('·')[0].trim();
+const isWater = p => normTxt(p.where).trim() === 'voda';
+// krátký název péče: „zalít, když proschnou…“ → „Zalít“
+function shortCare(txt) {
+  const s = normTxt(txt);
+  if (/vymenit vodu/.test(s)) return 'Vyměnit vodu';
+  if (/zal/.test(s)) return 'Zalít';
+  const f = String(txt || '').split(/[,(]| když/)[0].trim();
+  return f ? f[0].toUpperCase() + f.slice(1) : 'Péče';
+}
+const careWord = p => (p.careName || '').trim() || (isWater(p) ? 'vyměnit vodu' : 'zalít');
+const fertInterval = d => { const m = +String(d || today()).slice(5, 7); return m >= 3 && m <= 9 ? 14 : 28; };
+// Opakovaná péče: w = zalít/voda, f = hnojení (automaticky), c = vlastní další péče
+function plantTasks(p) {
+  const t = [];
+  if (num(p.interval) > 0) t.push({ k: 'w', icon: '💧', name: shortCare(careWord(p)), full: careWord(p), interval: num(p.interval), last: p.lastCare || null, from: null });
+  if (!isWater(p) && !p.fertOff) t.push({ k: 'f', icon: '🌱', name: 'Pohnojit', full: plantSp(p) === 'ctenanthe' ? 'čtvrtinová dávka hnojiva do vody na zalití' : 'poloviční dávka hnojiva do vody na zalití', interval: fertInterval(p.lastFert), last: p.lastFert || null, from: p.fertFrom || null });
+  if (num(p.int2) > 0) t.push({ k: 'c', icon: '✳️', name: shortCare(p.care2 || 'péče'), full: p.care2 || '', interval: num(p.int2), last: p.last2 || null, from: null });
+  return t;
+}
+function taskNext(t) {
+  let n = t.last ? addDays(t.last, t.interval) : today();
+  if (t.from && n < t.from) n = t.from;
+  return n;
+}
+const taskLeft = t => daysBetween(today(), taskNext(t));
+const dueTasks = p => plantTasks(p).filter(t => taskLeft(t) <= 0);
+const duePlans = (p, d = today()) => (p.plan || []).filter(x => !x.done && (d === today() ? x.date <= d : x.date === d));
+function plantDue(p) { return dueTasks(p).length > 0 || duePlans(p).length > 0; }
+// co dělat s rostlinami v daný den → [{icon, label, names[]}]
+function plantDay(d) {
+  const t = today(), g = {};
+  const add = (icon, label, name) => { const key = icon + label; (g[key] ||= { icon, label, names: [] }).names.push(name); };
+  S.plants.forEach(p => {
+    plantTasks(p).forEach(x => { const n = taskNext(x); if (d === t ? n <= t : n === d) add(x.icon, x.name, p.name); });
+    duePlans(p, d).forEach(x => add('📌', x.text, p.name));
+  });
+  return Object.values(g);
+}
+const inDays = n => n <= 0 ? 'dnes' : n === 1 ? 'zítra' : n < 5 ? `za ${n} dny` : `za ${n} dní`;
+// jednorázové nastavení podle rad z 20. 10. 2026 (přesazení, hnojení, plány na jaro)
+function seedPlants() {
+  if (S.plantSeed >= 1) return false;
+  S.plants.forEach(p => {
+    if (!p.sp) p.sp = guessSp(p);
+    p.plan ||= [];
+    const w = normTxt(p.where), nm = normTxt(p.name + ' ' + p.sub), sp = p.sp;
+    const pl = (date, text) => { if (!p.plan.some(x => x.text === text)) p.plan.push({ id: uid(), date, text, done: false }); };
+    if (/hlineny|11 cm/.test(w)) { p.fertFrom ||= '2026-11-20'; if (sp === 'adansonii') pl('2026-11-03', 'Zalévání přepnout na každých 6 dní (upravit)'); }
+    if (/zachran/.test(normTxt(p.name))) p.fertOff = true;
+    if (sp === 'ficus') pl('2027-03-15', 'Přesadit do o 3–4 cm většího květináče');
+    if (sp === 'deliciosa' && !isWater(p)) pl('2027-03-15', 'Dát mechovou tyč místo tenké hůlky');
+    if (sp === 'pachira' && !/hlineny|11 cm/.test(w)) pl('2027-04-01', 'Uříznout 2 řízky na splétání');
+    if (sp === 'dracaena') pl('2027-05-15', 'Dát ven na léto (ne na ostré polední slunce)');
+  });
+  S.plantSeed = 1;
+  return true;
+}
 function foodStreak() {
   const set = new Set(S.food); let d = set.has(today()) ? today() : addDays(today(), -1), n = 0;
   while (set.has(d)) { n++; d = addDays(d, -1); }
@@ -287,11 +441,12 @@ function vHome() {
     return `<button class="wd ${on ? 'today' : ''} ${s === t ? 'isnow' : ''}" data-act="homeDay" data-d="${s}" aria-label="${DOWL[dow(s)]} ${dayNum(s)}."><span>${DOW[dow(s)]}</span><b class="wdn">${dayNum(s)}</b><span class="dots">${dots || '<span style="border:1px solid #7E6C5A;box-sizing:border-box"></span>'}</span></button>`;
   }).join('');
   const due = S.plants.filter(plantDue).length;
-  const tiles = S.plants.map(p => { const ph = plantPhoto(p); const w = p.where === 'voda' && !p.roots && !p.leaves;
-    return `<a class="ptile ${w ? 'wait' : ''} ${ph ? 'has' : ''}" href="#/rostlina/${p.id}">${ph ? `<img data-img="${ph}" alt="${esc(p.name)}">` : svg(w ? 'stem' : 'sprout', 34, 1.6, w ? '#8A6F5A' : '#4F5A2A')}<span class="sm b">${esc(p.name)}</span><span class="xs ${w ? 'mutd' : 'ok'}">${esc(plantShort(p))}</span></a>`; }).join('');
+  const tiles = S.plants.map(p => { const ph = plantPhoto(p); const w = isWater(p) && !p.roots && !p.leaves; const st = plantStatus(p);
+    return `<a class="ptile ${w ? 'wait' : ''} ${ph ? 'has' : ''}" href="#/rostlina/${p.id}">${ph ? `<img data-img="${ph}" alt="${esc(p.name)}">` : svg(w ? 'stem' : 'sprout', 34, 1.6, w ? '#8A6F5A' : '#4F5A2A')}<span class="sm b">${esc(p.name)}</span><span class="pstat ${st.due ? 'due' : ''}">${esc(st.text)}</span></a>`; }).join('');
   const todos = S.todos[hs] || [];
   const tdHtml = todos.length ? todos.map(x => `<div class="todo"><button class="tbtn" data-act="todo" data-id="${x.id}"><span class="cbox ${x.done ? 'on' : ''}">${x.done ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2C2118" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>' : ''}</span><span class="${x.done ? 'done-t' : ''}">${esc(x.text)}</span></button><button class="xbtn" data-act="todoDel" data-id="${x.id}" aria-label="Smazat úkol">×</button></div>`).join('') : '<div class="empty">Žádné úkoly. Přidej si úkol.</div>';
   const done = todos.filter(x => x.done).length;
+  const pday = plantDay(hs);
   const gymW = S.gym.filter(d => weekStart(d) === ws).length;
   const gymToday = S.gym.includes(t), foodToday = S.food.includes(t);
   const gd = [1, 2, 3].map(i => `<span style="flex:1;height:8px;border-radius:4px;background:${gymW >= i ? '#4F5A2A' : '#E3D5C3'}"></span>`).join('');
@@ -316,6 +471,7 @@ function vHome() {
   <div class="card">
     <div class="row base"><div class="ttl" style="font-size:24px">${hs === t ? 'Dnes' : hs === addDays(t, 1) ? 'Zítra' : hs === addDays(t, -1) ? 'Včera' : DOWL[dow(hs)] + ' ' + dayNum(hs) + '.'}</div><span class="sm mut">${done} / ${todos.length} hotovo</span></div>
     ${(() => { const ev = dayEvents(hs); return ev.length ? `<div class="col" style="gap:2px;padding-bottom:6px;border-bottom:1px solid var(--card2)">${ev.map(e => `<div class="ev"><span class="bar4" style="background:${e.color}"></span><span class="sm mut" style="width:56px;flex-shrink:0">${esc(e.time || '')}</span><span class="grow">${esc(e.text)}</span></div>`).join('')}</div>` : '<div class="note mut" style="color:var(--muted)">V kalendáři na tenhle den nic.</div>'; })()}
+    ${pday.length ? `<div class="col" style="gap:2px;padding-bottom:6px;border-bottom:1px solid var(--card2)">${pday.map(x => `<a class="ev" href="#/rostliny" style="text-decoration:none;color:inherit"><span style="width:20px;text-align:center">${x.icon}</span><span class="grow"><b>${esc(x.label)}</b> <span class="mut">· ${esc(x.names.join(', '))}</span></span></a>`).join('')}</div>` : ''}
     ${tdHtml}
     <div class="addrow"><label for="newTodo" class="sr">Nový úkol</label><input id="newTodo" placeholder="Přidat úkol…" enterkeyhint="done" data-enter="addTodo"><button data-act="addTodo">Přidat</button></div>
   </div>
@@ -345,6 +501,12 @@ function authErr(e) {
   if (c.includes('network')) return 'Chybí internet';
   if (c.includes('operation-not-allowed')) return 'Ve Firebase není zapnuté přihlášení e-mailem';
   return 'Chyba: ' + (e?.message || c);
+}
+function plantStatus(p) {
+  const d = dueTasks(p), pl = duePlans(p);
+  if (d.length || pl.length) return { due: true, text: [...d.map(t => t.icon + ' ' + t.name.toLowerCase()), ...(pl.length ? ['📌 úkol'] : [])].join(' · ') + ' dnes' };
+  const nx = plantTasks(p).sort((a, b) => taskLeft(a) - taskLeft(b))[0];
+  return { due: false, text: nx ? `${nx.icon} ${nx.name.toLowerCase()} ${inDays(taskLeft(nx))}` : 'bez připomínek' };
 }
 function plantShort(p) { if (p.where === 'voda') return p.roots ? `${p.roots} kořeny${p.leaves ? ' + list' : ''}` : 'čeká'; return p.where || ''; }
 
@@ -579,17 +741,15 @@ function vSchool() {
    ROSTLINY
    ====================================================== */
 function vPlants() {
-  const due = S.plants.filter(plantDue);
-  const groups = {}; due.forEach(p => { (groups[careWord(p)] ||= []).push(p.name); });
-  const hero = due.length ? Object.entries(groups).map(([w, n]) => `${w[0].toUpperCase() + w.slice(1)}: ${n.join(', ')}`).join('<br>') : 'Dnes nic.<br>Všechno v pohodě.';
+  const items = plantDay(today());
+  const hero = items.length ? items.map(x => `<div class="prow"><span class="tic">${x.icon}</span><span class="grow col"><b class="md">${esc(x.label)}</b><span class="sm" style="opacity:.75">${esc(x.names.join(', '))}</span></span></div>`).join('') : '<span class="mid" style="font-size:24px">Dnes nic. Všechno v pohodě.</span>';
   const cards = S.plants.map(p => {
-    const ph = plantPhoto(p), last = p.entries?.[0];
-    const w = p.where === 'voda' && !p.roots && !p.leaves;
-    return `<a class="pcard" href="#/rostlina/${p.id}"><div class="ph ${w ? 'wait' : ''}">${ph ? `<img data-img="${ph}" alt="">` : svg(w ? 'stem' : 'sprout', 44, 1.5, w ? '#8A6F5A' : '#4F5A2A')}</div><span class="md b" style="font-size:15px">${esc(p.name)}</span><span class="sm mutd">${esc([p.where, p.roots ? p.roots + ' kořeny' : '', p.leaves ? p.leaves + ' nové listy' : ''].filter(Boolean).join(' · '))}</span><span class="xs b ${plantDue(p) ? 'bad' : 'ok'}">${plantDue(p) ? careWord(p) + ' dnes' : last ? 'poslední zápis: ' + relDay(last.date) : 'zatím bez zápisu'}</span></a>`;
+    const ph = plantPhoto(p), w = isWater(p) && !p.roots && !p.leaves, st = plantStatus(p);
+    return `<a class="pcard" href="#/rostlina/${p.id}"><div class="ph ${w ? 'wait' : ''}">${ph ? `<img data-img="${ph}" alt="">` : svg(w ? 'stem' : 'sprout', 44, 1.5, w ? '#8A6F5A' : '#4F5A2A')}</div><span class="md b" style="font-size:15px;line-height:1.25">${esc(p.name)}</span><span class="sm mutd" style="font-style:italic">${esc(spName(p) || '—')}</span><span class="pstat ${st.due ? 'due' : ''}">${esc(st.text)}</span></a>`;
   }).join('');
   return `
-  <div class="row"><h1 class="h1">Rostliny</h1><span class="sm mut">${S.plants.length} rostliny</span></div>
-  <div class="card moss hero" style="flex-direction:row;justify-content:space-between;align-items:center"><div class="col gap4"><span class="md b">Dnes udělat</span><span class="mid">${hero}</span></div>${svg('drop', 52, 1.5, '#2C2118')}</div>
+  <div class="row"><h1 class="h1">Rostliny</h1><span class="sm mut">${S.plants.length} rostlin</span></div>
+  <div class="card moss hero col" style="gap:4px"><div class="row"><span class="md b">Dnes udělat</span>${svg('drop', 26, 1.6, '#2C2118')}</div>${hero}</div>
   <div class="pgrid">${cards}</div>
   <button class="tile add" style="min-height:52px;font-size:14px;border-radius:22px;border:2px dashed var(--dash)" data-act="addPlant">+ Přidat rostlinu</button>`;
 }
@@ -597,18 +757,28 @@ function vPlant(id) {
   const p = S.plants.find(x => x.id === id);
   if (!p) return '<a class="back" href="#/rostliny">‹ Rostliny</a><div class="empty">Rostlina nenalezena.</div>';
   if (!U.pdraft || U.pdraft.id !== id) U.pdraft = { id, text: '', file: null, url: '' };
-  const D = U.pdraft;
-  const careN = p.interval > 0 ? (p.lastCare ? p.interval - daysBetween(p.lastCare, today()) : 0) : null;
-  const care = p.interval > 0 ? `<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between"><div class="col"><span class="sm mut">Další péče (${careWord(p)})</span><span class="md b" style="color:${careN <= 0 ? 'var(--terra)' : 'var(--ink)'}">${careN <= 0 ? 'dnes' : `za ${careN} dní`}</span></div><button class="btn moss" style="width:auto;min-height:44px" data-act="careDone" data-id="${p.id}">✓ Hotovo</button></div>` : '';
+  const D = U.pdraft, sp = SPECIES[plantSp(p)];
+  const origin = (p.sub || '').includes('·') ? p.sub.split('·').slice(1).join('·').trim() : (sp.name ? '' : p.sub || '');
+  const tasks = plantTasks(p);
+  const care = tasks.length ? `<div class="card col" style="gap:0"><div class="ttl" style="font-size:22px;padding-bottom:4px">Péče</div>${tasks.map(t => { const n = taskLeft(t); return `<div class="crow"><span class="tic">${t.icon}</span><span class="grow col"><b class="md">${esc(t.name)}</b>${t.full && normTxt(t.full) !== normTxt(t.name) ? `<span class="xs mut">${esc(t.full)}</span>` : ''}</span><span class="sm b" style="color:${n <= 0 ? 'var(--terra)' : 'var(--muted)'};white-space:nowrap">${t.k === 'f' && t.from && n > 0 && !t.last ? 'od ' + shortD(t.from) : inDays(n)}</span><button class="okbtn" data-act="careDone" data-id="${p.id}" data-k="${t.k}" aria-label="${esc(t.name)} hotovo">✓</button></div>`; }).join('')}</div>` : '';
+  const plans = (p.plan || []).filter(x => !x.done).sort((a, b) => a.date.localeCompare(b.date));
+  const planHtml = `<div class="card col" style="gap:0"><div class="ttl" style="font-size:22px;padding-bottom:4px">Naplánováno</div>
+    ${plans.length ? plans.map(x => `<div class="crow"><span class="tic">📌</span><span class="grow col"><b class="md" style="font-weight:600">${esc(x.text)}</b><span class="xs" style="color:${x.date <= today() ? 'var(--terra)' : 'var(--muted)'}">${x.date <= today() ? 'dnes' : shortD(x.date) + ' ' + x.date.slice(0, 4)}</span></span><button class="okbtn" data-act="planDone" data-id="${p.id}" data-pid="${x.id}" aria-label="Hotovo">✓</button><button class="xbtn" data-act="planDel" data-id="${p.id}" data-pid="${x.id}" aria-label="Smazat">×</button></div>`).join('') : '<div class="sm mut" style="padding:6px 0">Nic naplánovaného.</div>'}
+    <div class="row gap8" style="padding-top:8px"><input id="plDate" type="date" class="inp" style="width:150px;flex-shrink:0" value="${addDays(today(), 7)}"><input id="plText" class="inp grow" placeholder="Co udělat (přesadit…)" data-enter="planAdd" data-id="${p.id}"></div>
+    <button class="btn light" style="margin-top:8px" data-act="planAdd" data-id="${p.id}">+ Naplánovat</button></div>`;
   const ents = (p.entries || []).map((e, i) => `<button class="entry" data-act="entryOpen" data-id="${p.id}" data-i="${i}">${e.photo ? `<img data-img="${e.photo}" alt="Fotka ${esc(p.name)}" data-act="viewImg" data-id="${e.photo}" style="cursor:zoom-in">` : ''}<span class="tx"><span class="sm b" style="color:var(--moss)">${shortD(e.date)}${e.date === today() ? ' · dnes' : ''}</span>${e.text ? `<span class="md" style="line-height:1.4">${esc(e.text)}</span>` : ''}</span></button>`).join('');
   const photos = (p.entries || []).filter(e => e.photo).length;
+  const wt = tasks.find(t => t.k === 'w');
   return `
   <div class="row"><a class="back" href="#/rostliny">‹ Rostliny</a><button class="hbtn" data-act="plantEdit" data-id="${p.id}">upravit</button></div>
   <div class="cols"><div class="c1">
   ${p.cover ? `<div class="cover"><img data-img="${p.cover}" alt="${esc(p.name)}" data-act="viewImg" data-id="${p.cover}" style="cursor:zoom-in"><label class="cover-btn filebtn">změnit fotku<input type="file" accept="image/*" data-file="plantCover" data-id="${p.id}"></label></div>` : `<label class="cover filebtn" aria-label="Přidat fotku rostliny">${svg('cam', 30)}<span class="sm b">+ Přidat fotku rostliny</span><input type="file" accept="image/*" data-file="plantCover" data-id="${p.id}"></label>`}
-  <div class="col gap4"><h1 class="h1" style="font-size:38px">${esc(p.name)}</h1><span class="md mut">${esc(p.sub)}</span></div>
-  <div class="minis"><div class="mini"><span>Kořeny</span><b>${esc(p.roots === '' ? '—' : p.roots)}</b></div><div class="mini"><span>Nové listy</span><b style="color:var(--moss)">${esc(p.leaves === '' ? '—' : p.leaves)}</b></div><div class="mini"><span>Kde je</span><b>${esc(p.where || '—')}</b></div></div>
+  <div class="col gap4"><h1 class="h1" style="font-size:38px">${esc(p.name)}</h1>${sp.name ? `<span class="md mut"><i>${esc(sp.name)}</i> · ${esc(sp.cz)}</span>` : ''}${origin ? `<span class="sm mut">odkud: ${esc(origin)}</span>` : ''}</div>
+  <div class="minis"><div class="mini"><span>Kořeny</span><b>${esc(p.roots === '' || p.roots == null ? '—' : p.roots)}</b></div><div class="mini"><span>Nové listy</span><b style="color:var(--moss)">${esc(p.leaves === '' || p.leaves == null ? '—' : p.leaves)}</b></div><div class="mini"><span>${wt ? esc(wt.name) : 'Péče'}</span><b style="color:${wt && taskLeft(wt) <= 0 ? 'var(--terra)' : 'inherit'}">${wt ? inDays(taskLeft(wt)) : '—'}</b></div></div>
+  ${p.where ? `<div class="potline">🪴 <span>${esc(p.where)}</span></div>` : ''}
+  <div class="row gap8"><button class="btn light grow" data-act="plantTips" data-id="${p.id}">📖 Rady k péči</button><button class="btn light grow" data-act="plantHist" data-id="${p.id}">🕰 Historie</button></div>
   ${care}
+  ${planHtml}
   <div class="card cream">
     <div class="ttl">Nový zápis</div>
     <div class="row gap10" style="align-items:stretch">
@@ -732,15 +902,37 @@ const SHEETS = {
   },
   plant(id) {
     const p = id ? S.plants.find(x => x.id === id) : { name: '', sub: '', where: 'voda', roots: '', leaves: '', interval: 7 };
+    const cur = id ? plantSp(p) : 'other';
     return `<div class="row"><span class="md b">${id ? 'Upravit rostlinu' : 'Nová rostlina'}</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
     <label class="lbl" for="plName">Název</label><input id="plName" class="inp" value="${esc(p.name)}" placeholder="Řízek C">
-    <label class="lbl" for="plSub">Druh / odkud je</label><input id="plSub" class="inp" value="${esc(p.sub)}" placeholder="Monstera · z Futuru">
-    <label class="lbl" for="plWhere">Kde je</label><input id="plWhere" class="inp" value="${esc(p.where)}" list="whereList"><datalist id="whereList"><option value="voda"><option value="substrát"><option value="kůra + hlína"><option value="substrát + hlína"></datalist>
-    <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plRoots">Kořeny</label><input id="plRoots" class="inp" inputmode="numeric" value="${esc(p.roots)}"></div><div class="col gap4 grow"><label class="lbl" for="plLeaves">Nové listy</label><input id="plLeaves" class="inp" inputmode="numeric" value="${esc(p.leaves)}"></div></div>
-    <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plCare">Jaká péče</label><input id="plCare" class="inp" value="${esc(p.careName || '')}" placeholder="${p.where === 'voda' ? 'vyměnit vodu' : 'zalít'}" list="careList"><datalist id="careList"><option value="zalít"><option value="vyměnit vodu"><option value="pohnojit"><option value="postříkat listy"><option value="otočit k oknu"><option value="zkontrolovat kořeny"></datalist></div><div class="col gap4" style="width:120px"><label class="lbl" for="plInt">Každých (dní)</label><input id="plInt" class="inp" inputmode="numeric" value="${esc(p.interval)}"></div></div>
-    <div class="note">0 dní = připomínka vypnutá.</div>
+    <label class="lbl" for="plSp">Druh rostliny</label><select id="plSp" class="inp">${Object.entries(SPECIES).map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${k === 'other' ? 'Jiná / nevím' : esc(v.name + ' – ' + v.cz)}</option>`).join('')}</select>
+    <label class="lbl" for="plSub">Poznámka / odkud je</label><input id="plSub" class="inp" value="${esc(p.sub)}" placeholder="řízek z IKEA monstery">
+    <label class="lbl" for="plWhere">Kde je (substrát, květináč)</label><input id="plWhere" class="inp" value="${esc(p.where)}" list="whereList"><datalist id="whereList"><option value="voda"><option value="substrát"><option value="kůra + perlit + hlína"><option value="hlína + perlit"></datalist>
+    <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plRoots">Kořeny</label><input id="plRoots" class="inp" inputmode="numeric" value="${esc(p.roots ?? '')}"></div><div class="col gap4 grow"><label class="lbl" for="plLeaves">Nové listy</label><input id="plLeaves" class="inp" inputmode="numeric" value="${esc(p.leaves ?? '')}"></div></div>
+    <div class="ttl" style="font-size:20px;padding-top:10px">💧 Zalévání</div>
+    <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plCare">Jaká péče</label><input id="plCare" class="inp" value="${esc(p.careName || '')}" placeholder="${isWater(p) ? 'vyměnit vodu' : 'zalít'}" list="careList"><datalist id="careList"><option value="zalít"><option value="vyměnit vodu"><option value="zkontrolovat hlínu a zalít"></datalist></div><div class="col gap4" style="width:110px"><label class="lbl" for="plInt">Každých (dní)</label><input id="plInt" class="inp" inputmode="numeric" value="${esc(p.interval)}"></div></div>
+    <div class="ttl" style="font-size:20px;padding-top:10px">🌱 Hnojení</div>
+    <div class="row gap8" style="align-items:flex-end"><div class="col gap4 grow"><label class="lbl" for="plFertFrom">Začít od</label><input id="plFertFrom" type="date" class="inp" value="${esc(p.fertFrom || '')}"></div><label class="row gap8 sm" style="min-height:48px;cursor:pointer"><input id="plFertOff" type="checkbox" ${p.fertOff ? 'checked' : ''} style="width:20px;height:20px"> nehnojit</label></div>
+    <div class="note">Hlídá se samo: v zimě 1× za 4 týdny, březen–září 1× za 2 týdny. Ve vodě se nehnojí.</div>
+    <div class="ttl" style="font-size:20px;padding-top:10px">✳️ Vlastní další péče</div>
+    <div class="row gap8"><div class="col gap4 grow"><label class="lbl" for="plCare2">Co</label><input id="plCare2" class="inp" value="${esc(p.care2 || '')}" placeholder="orosit listy" list="care2List"><datalist id="care2List"><option value="orosit listy"><option value="otřít listy"><option value="otočit k oknu"><option value="zkontrolovat kořeny"></datalist></div><div class="col gap4" style="width:110px"><label class="lbl" for="plInt2">Každých (dní)</label><input id="plInt2" class="inp" inputmode="numeric" value="${esc(p.int2 || 0)}"></div></div>
+    <div class="note">0 dní = připomínka vypnutá. Jednorázové věci (přesadit na jaře…) přidáš v detailu rostliny v „Naplánováno“.</div>
     <button class="btn" data-act="plantSave" data-id="${id || ''}">Uložit</button>
     ${id ? `<button class="btn ghost" data-act="plantDel" data-id="${id}">Smazat rostlinu</button>` : ''}`;
+  },
+  plantTips(id) {
+    const p = S.plants.find(x => x.id === id), sp = SPECIES[plantSp(p)];
+    return `<div class="row"><span class="md b">Rady k péči</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
+    <div class="col gap4"><span class="mid" style="font-size:26px">${esc(p.name)}</span>${sp.name ? `<span class="sm mutd"><i>${esc(sp.name)}</i> · ${esc(sp.cz)}</span>` : '<span class="sm mutd">Druh nevím – v „upravit“ vyber druh a ukážou se rady přímo pro něj.</span>'}</div>
+    ${isWater(p) ? '<div class="tipc"><b>🫙 Teď ve vodě</b><span>Vodu měň každých 5–7 dní. Do květináče až s kořeny 5–10 cm. Hnědý slizký kořen odstřihnout.</span></div>' : ''}
+    ${sp.tips.map(([h, t]) => `<div class="tipc"><b>${esc(h)}</b><span>${esc(t)}</span></div>`).join('')}`;
+  },
+  plantHist(id) {
+    const p = S.plants.find(x => x.id === id), sp = SPECIES[plantSp(p)];
+    return `<div class="row"><span class="md b">Historie</span><button class="xbtn" data-act="close" aria-label="Zavřít">×</button></div>
+    <span class="mid" style="font-size:26px">${esc(sp.name || p.name)}</span>
+    <div class="md" style="line-height:1.55">${sp.history ? esc(sp.history) : 'U tohohle druhu historii nemám – vyber druh v „upravit“.'}</div>
+    ${(p.entries || []).length ? `<div class="sm mutd">Tvoje historie: první zápis ${shortD(p.entries[p.entries.length - 1].date)}, celkem ${p.entries.length} zápisů v deníku.</div>` : ''}`;
   },
   entry(arg) {
     const [pid, i] = arg; const p = S.plants.find(x => x.id === pid); const e = p?.entries[i]; if (!e) return '';
@@ -913,12 +1105,17 @@ const ACT = {
   plantEdit: el => openSheet('plant', el.dataset.id),
   plantSave: el => {
     const n = val('plName'); if (!n) return; const id = el.dataset.id;
-    const data = { name: n, sub: val('plSub'), where: val('plWhere'), roots: val('plRoots') === '' ? '' : num(val('plRoots')), leaves: val('plLeaves') === '' ? '' : num(val('plLeaves')), interval: num(val('plInt')), careName: val('plCare') };
+    const data = { name: n, sp: val('plSp'), fertFrom: val('plFertFrom'), fertOff: $('#plFertOff')?.checked || false, sub: val('plSub'), where: val('plWhere'), roots: val('plRoots') === '' ? '' : num(val('plRoots')), leaves: val('plLeaves') === '' ? '' : num(val('plLeaves')), interval: num(val('plInt')), careName: val('plCare'), care2: val('plCare2'), int2: num(val('plInt2')) };
     if (id) Object.assign(S.plants.find(p => p.id === id), data); else S.plants.push({ id: uid(), lastCare: null, entries: [], ...data });
     save(); closeSheet(); render();
   },
   plantDel: async el => { if (!confirm('Smazat rostlinu i s deníkem?')) return; const p = S.plants.find(x => x.id === el.dataset.id); for (const e of p.entries) if (e.photo) await delFile(e.photo); if (p.cover) await delFile(p.cover); S.plants = S.plants.filter(x => x.id !== el.dataset.id); save(); closeSheet(); go('rostliny'); },
-  careDone: el => { const p = S.plants.find(x => x.id === el.dataset.id); p.lastCare = today(); p.entries.unshift({ date: today(), text: careWord(p)[0].toUpperCase() + careWord(p).slice(1) + ' ✓', photo: null }); save(); render(); toast('Hotovo ✓'); },
+  careDone: el => { const p = S.plants.find(x => x.id === el.dataset.id), k = el.dataset.k || 'w'; const t = plantTasks(p).find(x => x.k === k); if (!t) return; if (k === 'f') p.lastFert = today(); else if (k === 'c') p.last2 = today(); else p.lastCare = today(); (p.entries ||= []).unshift({ date: today(), text: (k === 'f' ? 'Pohnojeno' : t.name) + ' ✓', photo: null }); save(); render(); toast('Hotovo ✓'); },
+  plantTips: el => openSheet('plantTips', el.dataset.id),
+  plantHist: el => openSheet('plantHist', el.dataset.id),
+  planAdd: el => { const p = S.plants.find(x => x.id === el.dataset.id), d = $('#plDate')?.value, t = ($('#plText')?.value || '').trim(); if (!t || !d) return toast('Napiš co a kdy'); (p.plan ||= []).push({ id: uid(), date: d, text: t, done: false }); save(); render(); toast('Naplánováno'); },
+  planDone: el => { const p = S.plants.find(x => x.id === el.dataset.id), x = (p.plan || []).find(y => y.id === el.dataset.pid); if (!x) return; x.done = true; (p.entries ||= []).unshift({ date: today(), text: x.text + ' ✓', photo: null }); save(); render(); toast('Hotovo ✓'); },
+  planDel: el => { const p = S.plants.find(x => x.id === el.dataset.id); p.plan = (p.plan || []).filter(y => y.id !== el.dataset.pid); save(); render(); },
   entrySave: async el => {
     const p = S.plants.find(x => x.id === el.dataset.id), D = U.pdraft; const t = String(D.text).trim();
     if (!t && !D.file) return toast('Přidej fotku nebo text');
@@ -963,6 +1160,7 @@ document.addEventListener('input', e => { const el = e.target; if (el.dataset.bi
 document.addEventListener('change', e => { const el = e.target; if (el.dataset.file) FILE[el.dataset.file]?.(el); if (el.dataset.bind && el.type === 'date') { setPath(el.dataset.bind, el.value); if (U.sheetFn !== 'tx') LIVE.dayPrev(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset?.enter) { e.preventDefault(); ACT[e.target.dataset.enter]?.(e.target, e); } });
 
+migrate();
 cloudInit();
 render();
 LIVE.dayPrev();
